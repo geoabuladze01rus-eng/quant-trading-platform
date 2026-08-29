@@ -1,18 +1,21 @@
-import type { AuditEvent, ExchangeHealth, Opportunity, PlatformMode, SafetyState } from './types';
+import type { AuditEvent, ExchangeHealth, MarketScope, Opportunity, PlatformMode, SafetyState } from './types';
 
 export const platformMode: PlatformMode = 'PAPER';
+export const marketScope: MarketScope = 'MIXED';
 export const safetyState: SafetyState = 'OK';
 
 export const exchangeHealth: ExchangeHealth[] = [
-  { name: 'Binance', status: 'OK', latencyMs: 94 },
-  { name: 'Bybit', status: 'OK', latencyMs: 121 },
-  { name: 'OKX', status: 'DELAYED', latencyMs: 318 },
+  { name: 'Binance', group: 'Crypto', status: 'OK', latencyMs: 94 },
+  { name: 'Bybit', group: 'Crypto', status: 'OK', latencyMs: 121 },
+  { name: 'OKX', group: 'Crypto', status: 'DELAYED', latencyMs: 318 },
+  { name: 'T-Invest', group: 'Russian market', status: 'SANDBOX', latencyMs: 155 },
 ];
 
 export const opportunities: Opportunity[] = [
   {
     id: 'opp-1',
     time: '12:01:02',
+    market: 'Crypto',
     strategy: 'Triangular',
     path: 'BTC/USDT -> ETH/BTC -> ETH/USDT',
     buyVenue: 'Binance',
@@ -29,6 +32,7 @@ export const opportunities: Opportunity[] = [
   {
     id: 'opp-2',
     time: '12:02:14',
+    market: 'Crypto',
     strategy: 'Spread',
     path: 'ETH/USDT',
     buyVenue: 'OKX',
@@ -45,6 +49,7 @@ export const opportunities: Opportunity[] = [
   {
     id: 'opp-3',
     time: '12:04:41',
+    market: 'Crypto',
     strategy: 'Funding',
     path: 'BTC spot/perp basis',
     buyVenue: 'Binance',
@@ -58,12 +63,30 @@ export const opportunities: Opportunity[] = [
     decision: 'Watch',
     reason: 'Strategy disabled for MVP',
   },
+  {
+    id: 'opp-4',
+    time: '12:06:10',
+    market: 'Russian market',
+    strategy: 'Portfolio signal',
+    path: 'SBER / bonds / cash risk rebalance',
+    buyVenue: 'T-Invest',
+    sellVenue: 'T-Invest',
+    grossPct: 0.11,
+    feesPct: 0.02,
+    slippagePct: 0.02,
+    netPct: 0.07,
+    notionalUsd: 300,
+    dataAgeMs: 155,
+    decision: 'Watch',
+    reason: 'T-Invest sandbox only',
+  },
 ];
 
 export const auditEvents: AuditEvent[] = [
   {
     id: 'log-1',
     time: '12:01:02',
+    market: 'Crypto',
     event: 'Signal',
     strategy: 'Triangular',
     netEdge: 0.21,
@@ -73,6 +96,7 @@ export const auditEvents: AuditEvent[] = [
   {
     id: 'log-2',
     time: '12:02:14',
+    market: 'Crypto',
     event: 'Rejected',
     strategy: 'Spread',
     netEdge: 0.07,
@@ -82,9 +106,20 @@ export const auditEvents: AuditEvent[] = [
   {
     id: 'log-3',
     time: '12:03:30',
+    market: 'System',
     event: 'Health check',
     strategy: 'System',
     decision: 'Warning',
     reason: 'OKX data latency above normal range',
+  },
+  {
+    id: 'log-4',
+    time: '12:06:10',
+    market: 'Russian market',
+    event: 'Sandbox signal',
+    strategy: 'Portfolio signal',
+    netEdge: 0.07,
+    decision: 'Watch',
+    reason: 'T-Invest live execution is not enabled',
   },
 ];
