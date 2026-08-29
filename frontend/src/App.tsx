@@ -10,7 +10,14 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 
-import { auditEvents, exchangeHealth, opportunities, platformMode, safetyState } from './mockData';
+import {
+  auditEvents,
+  exchangeHealth,
+  marketScope,
+  opportunities,
+  platformMode,
+  safetyState,
+} from './mockData';
 
 const money = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -30,7 +37,7 @@ export function App() {
           <div className="brand-mark">QT</div>
           <div>
             <strong>Quant Platform</strong>
-            <span>Arbitrage control</span>
+            <span>Mixed-market control</span>
           </div>
         </div>
 
@@ -46,11 +53,12 @@ export function App() {
       <main className="main-content">
         <header className="topbar" id="command">
           <div>
-            <p className="eyebrow">Autonomous crypto arbitrage</p>
+            <p className="eyebrow">Crypto arbitrage + T-Invest research</p>
             <h1>Command center</h1>
           </div>
           <div className="mode-cluster" aria-label="Platform state">
             <span className="status-pill paper">Mode: {platformMode}</span>
+            <span className="status-pill paper">Scope: {marketScope}</span>
             <span className="status-pill ok">Safety: {safetyState}</span>
             <span className="status-pill locked"><Lock size={14} /> Live locked</span>
           </div>
@@ -68,9 +76,9 @@ export function App() {
             <div className="risk-track" aria-label="Daily loss limit usage"><i style={{ width: '9%' }} /></div>
           </article>
           <article className="metric-card">
-            <span>Per-trade limit</span>
-            <strong>{money.format(100)}</strong>
-            <small>MVP safety cap</small>
+            <span>Market scopes</span>
+            <strong>Crypto + RU</strong>
+            <small>Strategies remain isolated</small>
           </article>
           <article className="metric-card danger-soft">
             <span>Real execution</span>
@@ -83,7 +91,7 @@ export function App() {
           <article className="panel">
             <div className="panel-header">
               <div>
-                <p className="eyebrow">Exchange data</p>
+                <p className="eyebrow">Venue data</p>
                 <h2>Market health</h2>
               </div>
               <DatabaseZap size={20} />
@@ -92,6 +100,7 @@ export function App() {
               {exchangeHealth.map((exchange) => (
                 <div className="health-row" key={exchange.name}>
                   <span>{exchange.name}</span>
+                  <small>{exchange.group}</small>
                   <b className={exchange.status === 'OK' ? 'good' : 'warn'}>{exchange.status}</b>
                   <small>{exchange.latencyMs} ms</small>
                 </div>
@@ -108,11 +117,11 @@ export function App() {
               <Activity size={20} />
             </div>
             <div className="decision-list">
-              {auditEvents.slice(0, 3).map((event) => (
+              {auditEvents.slice(0, 4).map((event) => (
                 <div className="decision-row" key={event.id}>
                   <span>{event.time}</span>
                   <strong>{event.event}</strong>
-                  <small>{event.reason}</small>
+                  <small>{event.market}: {event.reason}</small>
                 </div>
               ))}
             </div>
@@ -132,6 +141,7 @@ export function App() {
               <thead>
                 <tr>
                   <th>Time</th>
+                  <th>Market</th>
                   <th>Strategy</th>
                   <th>Path</th>
                   <th>Venues</th>
@@ -149,6 +159,7 @@ export function App() {
                 {opportunities.map((item) => (
                   <tr key={item.id}>
                     <td>{item.time}</td>
+                    <td>{item.market}</td>
                     <td>{item.strategy}</td>
                     <td className="path-cell">{item.path}</td>
                     <td>{item.buyVenue} / {item.sellVenue}</td>
@@ -179,10 +190,11 @@ export function App() {
             <ul className="check-list">
               <li>Live trading locked by default</li>
               <li>Daily loss limit: 2%</li>
+              <li>Crypto and Russian-market strategies isolated</li>
+              <li>T-Invest sandbox mode by default</li>
               <li>Stale data pause</li>
               <li>Balance mismatch stop</li>
               <li>API error pause</li>
-              <li>No withdrawal API permissions</li>
             </ul>
           </article>
 
@@ -196,9 +208,11 @@ export function App() {
             </div>
             <div className="settings-grid">
               <label>Mode <input value="paper" readOnly /></label>
+              <label>Market scope <input value="mixed" readOnly /></label>
               <label>Max daily loss <input value="2%" readOnly /></label>
               <label>Min net edge <input value="0.10%" readOnly /></label>
               <label>Max notional <input value="$100" readOnly /></label>
+              <label>T-Invest <input value="sandbox" readOnly /></label>
             </div>
             <p className="settings-note">API secrets are never shown or edited in the UI.</p>
           </article>
@@ -217,6 +231,7 @@ export function App() {
               <thead>
                 <tr>
                   <th>Time</th>
+                  <th>Market</th>
                   <th>Event</th>
                   <th>Strategy</th>
                   <th>Net edge</th>
@@ -228,6 +243,7 @@ export function App() {
                 {auditEvents.map((event) => (
                   <tr key={event.id}>
                     <td>{event.time}</td>
+                    <td>{event.market}</td>
                     <td>{event.event}</td>
                     <td>{event.strategy}</td>
                     <td>{event.netEdge === undefined ? '-' : pct(event.netEdge)}</td>
