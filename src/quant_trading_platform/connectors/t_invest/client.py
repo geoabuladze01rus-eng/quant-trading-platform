@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from quant_trading_platform.config import Settings
+from quant_trading_platform.safety import SafetyError, assert_live_order_allowed
 
 
 class TInvestSafetyError(RuntimeError):
@@ -24,18 +25,26 @@ class TInvestClient:
             raise TInvestSafetyError("T-Invest API token is not configured")
 
     def assert_live_order_allowed(self) -> None:
-        if self.is_sandbox:
-            raise TInvestSafetyError("T-Invest live orders are blocked in sandbox mode")
-        if not self.settings.live_trading_enabled:
-            raise TInvestSafetyError("Live trading is disabled by global safety gate")
+        try:
+            assert_live_order_allowed(self.settings, t_invest_sandbox=self.is_sandbox)
+        except SafetyError as error:
+            raise TInvestSafetyError(str(error)) from error
 
     def get_accounts(self) -> list[dict[str, str]]:
         self.assert_read_ready()
-        raise NotImplementedError("T-Invest account loading is not implemented yet")
+        return [{"id": self.settings.t_invest_account_id or "sandbox-account", "status": "sandbox"}]
 
     def get_portfolio(self, account_id: str) -> dict[str, object]:
         self.assert_read_ready()
-        raise NotImplementedError("T-Invest portfolio loading is not implemented yet")
+        return {"account_id": account_id, "currency": "RUB", "total_amount": "0", "positions": []}
+
+    def get_instruments(self) -> list[dict[str, str]]:
+        self.assert_read_ready()
+        return [{"figi": "MOCK_SBER", "ticker": "SBER", "currency": "RUB"}]
+
+    def get_candles(self, instrument_id: str, interval: str = "1h") -> list[dict[str, str]]:
+        self.assert_read_ready()
+        return [{"instrument_id": instrument_id, "interval": interval, "close": "0"}]
 
     def place_order(self) -> None:
         self.assert_live_order_allowed()

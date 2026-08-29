@@ -9,7 +9,9 @@ import {
   Settings,
   ShieldCheck,
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
+import { getSettings, type DashboardSettings } from './apiClient';
 import {
   auditEvents,
   exchangeHealth,
@@ -30,6 +32,17 @@ function pct(value: number) {
 }
 
 export function App() {
+  const [dashboardSettings, setDashboardSettings] = useState<DashboardSettings>({
+    trading_mode: platformMode,
+    market_scope: marketScope,
+    live_trading_enabled: false,
+    t_invest_sandbox: true,
+  });
+
+  useEffect(() => {
+    void getSettings().then(setDashboardSettings).catch(() => undefined);
+  }, []);
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -57,8 +70,8 @@ export function App() {
             <h1>Command center</h1>
           </div>
           <div className="mode-cluster" aria-label="Platform state">
-            <span className="status-pill paper">Mode: {platformMode}</span>
-            <span className="status-pill paper">Scope: {marketScope}</span>
+            <span className="status-pill paper">Mode: {dashboardSettings.trading_mode}</span>
+            <span className="status-pill paper">Scope: {dashboardSettings.market_scope}</span>
             <span className="status-pill ok">Safety: {safetyState}</span>
             <span className="status-pill locked"><Lock size={14} /> Live locked</span>
           </div>
@@ -207,12 +220,12 @@ export function App() {
               <Settings size={20} />
             </div>
             <div className="settings-grid">
-              <label>Mode <input value="paper" readOnly /></label>
-              <label>Market scope <input value="mixed" readOnly /></label>
+              <label>Mode <input value={dashboardSettings.trading_mode} readOnly /></label>
+              <label>Market scope <input value={dashboardSettings.market_scope} readOnly /></label>
               <label>Max daily loss <input value="2%" readOnly /></label>
               <label>Min net edge <input value="0.10%" readOnly /></label>
               <label>Max notional <input value="$100" readOnly /></label>
-              <label>T-Invest <input value="sandbox" readOnly /></label>
+              <label>T-Invest <input value={dashboardSettings.t_invest_sandbox ? 'sandbox' : 'read-only'} readOnly /></label>
             </div>
             <p className="settings-note">API secrets are never shown or edited in the UI.</p>
           </article>

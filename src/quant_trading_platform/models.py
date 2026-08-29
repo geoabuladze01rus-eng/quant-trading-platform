@@ -40,6 +40,10 @@ class ArbitrageOpportunity:
     expected_net_pct: Decimal
     max_notional_usd: Decimal
     detected_at_ms: int
+    gross_spread_pct: Decimal = Decimal("0")
+    fees_pct: Decimal = Decimal("0")
+    slippage_pct: Decimal = Decimal("0")
+    rejection_reason: str | None = None
     market_type: MarketType = MarketType.CRYPTO
 
     @property

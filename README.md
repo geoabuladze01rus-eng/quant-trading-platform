@@ -1,5 +1,37 @@
 # Quant Trading Platform
 
+Safe MVP foundation for crypto research (Binance, Bybit, OKX) and the Russian market (T-Invest). Defaults are `MARKET_SCOPE=mixed`, `TRADING_MODE=paper`, and live trading locked. The current connectors use mock data and cannot execute a real trade.
+
+## Run
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+pip install -e '.[dev]'
+uvicorn quant_trading_platform.api.app:app --reload
+```
+
+The read-only API is available at `http://127.0.0.1:8000` (`/docs` provides OpenAPI documentation).
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Set `VITE_API_BASE_URL=http://127.0.0.1:8000` to have the dashboard call the mock backend; without it the frontend uses its built-in mock client.
+
+## Checks
+
+```bash
+ruff check .
+mypy src
+pytest
+cd frontend && npm run build
+```
+
+See [architecture](docs/ARCHITECTURE.md), [safety gates](docs/SAFETY_GATES.md), and the [roadmap](docs/ROADMAP.md).
+
 Autonomous algorithmic trading platform for crypto arbitrage, Russian-market algorithmic strategies, research, backtesting, paper trading, and controlled execution.
 
 ## Safety first

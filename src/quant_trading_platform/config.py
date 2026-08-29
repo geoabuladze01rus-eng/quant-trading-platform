@@ -28,6 +28,9 @@ class Settings(BaseSettings):
 
     max_daily_loss_pct: PositiveFloat = Field(default=2.0, le=100)
     max_trade_notional_usd: PositiveFloat = 100.0
+    min_expected_net_pct: PositiveFloat = 0.10
+    max_market_data_age_ms: int = Field(default=1_000, gt=0)
+    live_order_acceptance_gate: bool = False
 
     binance_api_key: str | None = None
     binance_api_secret: str | None = None
