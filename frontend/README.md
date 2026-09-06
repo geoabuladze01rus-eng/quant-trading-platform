@@ -15,8 +15,19 @@ only and excluded from opportunities. Upstream error payloads are never rendered
 An unavailable or invalid backend response clears the dashboard's prior snapshot.
 
 Without `VITE_API_BASE_URL`, the dashboard displays explicitly labelled demo/mock
-fixtures. Fixtures never replace a failed backend request. The frontend does not
-send orders or accept API secrets; live execution remains locked.
+fixtures. Fixtures never replace a failed backend request or generate fills.
+The frontend only submits paper simulation requests; live execution remains locked.
+
+The explainable feed uses `/opportunities?explain=true`. Each item exposes its
+summary, decision code/text, deterministic risk gate score, costs and net edge.
+Advanced details show venue quotes, timestamp source, depth and decision audit.
+The explicit **Simulate paper order** action sends symbol, buy/sell venues and
+the server-provided simulation notional to `POST /paper/orders/simulate`.
+It requires approval, healthy public depth, a configured backend and a loaded
+ledger. Quote ages advance locally from the request start; controls expire at
+`max_market_data_age_ms` (default 1000 ms). The backend rechecks risk and books.
+`GET /paper/orders`, `/paper/fills`, and `/reconciliation` show the paper ledger.
+An uncertain POST response is never retried automatically; inspect the ledger.
 
 Screens included:
 

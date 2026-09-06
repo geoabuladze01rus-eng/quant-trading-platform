@@ -11,7 +11,8 @@ pip install -e '.[dev]'
 uvicorn quant_trading_platform.api.app:app --reload
 ```
 
-The read-only API is available at `http://127.0.0.1:8000` (`/docs` provides OpenAPI documentation).
+The API is available at `http://127.0.0.1:8000` (`/docs` provides OpenAPI documentation).
+GET endpoints are read-only; the only POST performs an in-memory paper simulation.
 
 ```bash
 cd frontend
@@ -52,7 +53,7 @@ curl http://127.0.0.1:8000/health
 The container serves FastAPI through Uvicorn on port 8000. Compose uses explicit
 paper/sandbox settings with live execution and acceptance disabled. No `.env` or
 exchange credentials are needed. Environment files are excluded from the build
-context. The published API is read-only, consumes public crypto data, and is intended for local
+context. The published API consumes public crypto data and supports paper-only simulation for local
 development; this Compose setup is not an authenticated public deployment.
 
 ## Checks
@@ -61,6 +62,7 @@ development; this Compose setup is not an authenticated public deployment.
 ruff check .
 mypy src
 pytest
+python -m compileall src
 cd frontend
 npm ci
 npm run build
@@ -68,6 +70,24 @@ npm run build
 
 See [architecture](docs/ARCHITECTURE.md), [safety gates](docs/SAFETY_GATES.md),
 the [roadmap](docs/ROADMAP.md), and [competitor lessons](docs/COMPETITOR_LESSONS.md).
+
+## Explainable paper execution
+
+`GET /opportunities?explain=true` adds a plain-language summary, reason code/text,
+gate-status risk score, and a server-selected simulation notional (up to $10).
+The original `GET /opportunities` contract remains unchanged for existing clients.
+The UI shows quotes/depth/freshness and disables simulation when data is not usable.
+No demo fixture can create a paper fill.
+
+`POST /paper/orders/simulate` accepts an explicit `{symbol, buy_venue, sell_venue,
+notional_usd}` intent. Prices, fees and risk decisions are server-owned. Both legs
+must pass depth and realized-edge checks; otherwise neither leg fills.
+`GET /paper/orders`, `/paper/fills`, `/reconciliation`, and `/audit` expose the result.
+See [paper trading](docs/PAPER_TRADING.md) for a curl example, calculations and limits.
+
+These are hypothetical unfinanced paired fills, **not** funded portfolio accounting,
+partial execution, a latency model or a profitability promise. In-memory history
+is bounded and disappears on restart. Live execution remains unimplemented.
 
 We are not copying Cryptohopper. We are building a clearer, safer, and more
 transparent trading platform. Signals must explain their logic, net edge must

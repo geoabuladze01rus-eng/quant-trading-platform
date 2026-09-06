@@ -5,11 +5,49 @@ from time import time
 from quant_trading_platform.models import ArbitrageOpportunity, venue_matches_market
 
 
+def reason_code_for(reason: str, approved: bool = False) -> str:
+    """Stable machine categories for legacy, human-readable gate decisions."""
+    if approved:
+        return "approved"
+    normalized = reason.lower()
+    categories = (
+        (("stale",), "stale_market_data"),
+        (("notional limit",), "notional_limit_exceeded"),
+        (("market type mismatch", "market_type mismatch"), "market_type_mismatch"),
+        (("liquidity", "depth"), "insufficient_depth"),
+        (("live",), "live_trading_locked"),
+        (("unavailable", "api error"), "venue_unavailable"),
+        (("net edge", "net profit"), "insufficient_edge_after_costs"),
+        (("balance mismatch",), "balance_mismatch"),
+        (("daily loss limit",), "daily_loss_limit_reached"),
+        (("timestamp", "data age"), "invalid_market_data"),
+        (("daily loss",), "invalid_daily_loss"),
+        (("fees", "slippage", "numeric"), "invalid_numeric_data"),
+        (("notional",), "invalid_notional"),
+    )
+    for fragments, code in categories:
+        if any(fragment in normalized for fragment in fragments):
+            return code
+    return "risk_rejected"
+
+
 @dataclass(frozen=True)
 class RiskDecision:
     approved: bool
     reason: str
     checks: tuple[str, ...] = ()
+    reason_code: str = ""
+    reason_text: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.reason_code:
+            object.__setattr__(self, "reason_code", reason_code_for(self.reason, self.approved))
+        if not self.reason_text:
+            object.__setattr__(self, "reason_text", self.reason)
+
+    @property
+    def explanation(self) -> str:
+        return self.reason_text
 
 
 @dataclass(frozen=True)

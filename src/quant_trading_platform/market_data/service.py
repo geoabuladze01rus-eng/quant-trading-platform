@@ -34,6 +34,7 @@ class MarketDataService:
         interval_seconds: float = 1.0,
         max_age_ms: int = 1_000,
         clock: Callable[[], int] = lambda: int(time() * 1000),
+        on_update: Callable[[], None] | None = None,
     ) -> None:
         if interval_seconds < 0.25 or max_age_ms <= 0:
             raise ValueError("Invalid polling limits")
@@ -43,6 +44,7 @@ class MarketDataService:
         self.interval_seconds = interval_seconds
         self.max_age_ms = max_age_ms
         self.clock = clock
+        self.on_update = on_update
         self.states = {source.venue: SourceState() for source in sources}
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -79,6 +81,19 @@ class MarketDataService:
             state.error = "stale_market_data" if is_stale else "public_market_data_unavailable"
             self.cache.pop(key, None)
 
+        if self.on_update is not None:
+            self.on_update()
+
+    def book_for_simulation(self, venue: Venue, symbol: str) -> NormalizedOrderBook | None:
+        """Never return a last-good book after a source error; engine rechecks age."""
+        state = self.states.get(venue)
+        if state is None or state.status not in ("ok", "stale"):
+            return None
+        book = state.book
+        if book is None or book.symbol != normalize_symbol(symbol):
+            return None
+        return book
+
     def snapshot(self) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
         for venue, state in self.states.items():
@@ -98,6 +113,9 @@ class MarketDataService:
                 "bid": None if book is None else str(book.to_quote().bid),
                 "ask": None if book is None else str(book.to_quote().ask),
                 "timestamp_source": None if book is None else book.timestamp_source,
+                "depth_status": "available" if status == "ok" else "unavailable",
+                "bid_levels": 0 if book is None else len(book.bids),
+                "ask_levels": 0 if book is None else len(book.asks),
             })
         return result
 
