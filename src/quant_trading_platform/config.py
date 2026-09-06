@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     max_trade_notional_usd: PositiveFloat = 100.0
     min_expected_net_pct: PositiveFloat = 0.10
     max_market_data_age_ms: int = Field(default=1_000, gt=0)
+    public_market_data_enabled: bool = True
+    market_data_symbol: str = "BTC/USDT"
+    market_data_poll_interval_seconds: float = Field(default=1.0, ge=0.25, le=60)
     live_order_acceptance_gate: bool = False
 
     binance_api_key: str | None = Field(default=None, repr=False, exclude=True)

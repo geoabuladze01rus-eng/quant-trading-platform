@@ -294,6 +294,33 @@ h2 {
   text-align: right;
 }
 
+.source-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #26354a;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+.source-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.source-status { font-size: 12px; padding: 4px 8px; }
+.source-status-ok { color: #8fb7ff; }
+.source-status-stale, .source-status-no_data { color: #f2c35b; }
+.source-status-error, .source-error-detail { color: #ff7b7b; }
+.source-status-disabled { color: #8a97aa; }
+.source-error { border-color: #8e4646; }
+.source-stale { border-color: #806a35; }
+.source-explanation { font-size: 13px; color: #b9c5d6; }
+.source-quote { display: grid; gap: 4px; font-size: 13px; font-variant-numeric: tabular-nums; }
+
 .table-wrap {
   overflow-x: auto;
   margin-top: 18px;

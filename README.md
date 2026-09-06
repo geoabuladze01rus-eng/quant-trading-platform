@@ -1,6 +1,6 @@
 # Quant Trading Platform
 
-Safe MVP foundation for crypto research (Binance, Bybit, OKX) and the Russian market (T-Invest). Defaults are `MARKET_SCOPE=mixed`, `TRADING_MODE=paper`, and live trading locked. The current connectors use mock data and cannot execute a real trade.
+Safe MVP foundation for crypto research (Binance, Bybit, OKX) and the Russian market (T-Invest). Defaults are `MARKET_SCOPE=mixed`, `TRADING_MODE=paper`, and live trading locked. Crypto connectors consume public REST order books without keys. T-Invest has a prepared sandbox read transport boundary and is not connected by default. Connectors cannot execute real trades.
 
 ## Run
 
@@ -19,17 +19,28 @@ npm ci
 npm run dev
 ```
 
-Set `VITE_API_BASE_URL=http://127.0.0.1:8000` to have the dashboard call the mock backend; without it the frontend uses its built-in mock client.
+Set `VITE_API_BASE_URL=http://127.0.0.1:8000` to read backend public market data; without it the frontend uses its explicitly labelled mock client.
 
-The API does not start collectors on GET requests. Until a producer populates
-its in-memory quote cache, `/opportunities` returns HTTP 200 with
+FastAPI lifespan starts independent public REST pollers for Binance, Bybit and OKX.
+GET requests only read their snapshots. Before the first valid snapshots,
+`/opportunities` returns HTTP 200 with
 `{"status":"no_data","opportunities":[]}`. Compatible quotes return an `ok`
-envelope with net edge, source data age, approval and rejection reason. Stale
-quotes remain visible as rejected candidates. The MVP cost assumptions are
+envelope with net edge, source data age, approval and rejection reason. Failed or
+stale responses are excluded from the cache; cached quotes which age out before
+the next poll are rejected by risk. `/venues` reports no_data/stale/error separately.
+The MVP cost assumptions are
 0.20% combined fees and 0.05% slippage; these are estimates, not venue fee schedules
 or depth execution guarantees. `/audit` reads existing events without adding any.
 Backend errors are displayed explicitly in the UI and never replaced by mock
 approvals. Local Vite origins on port 5173 are allowed by the API's CORS policy.
+
+Polling is keyless and enabled by default for crypto/mixed scope. Set
+`PUBLIC_MARKET_DATA_ENABLED=false` to disable it, `MARKET_DATA_SYMBOL=ETH/USDT`
+to change the pair, or `MARKET_DATA_POLL_INTERVAL_SECONDS=1` to set cadence.
+`MAX_MARKET_DATA_AGE_MS=1000` remains the rejection threshold; network latency
+and polling intervals can produce safe stale windows. See
+[read-only market data](docs/READ_ONLY_MARKET_DATA.md) for timestamp provenance,
+adapter contracts, public endpoints and T-Invest limitations.
 
 ## Docker
 
@@ -41,7 +52,7 @@ curl http://127.0.0.1:8000/health
 The container serves FastAPI through Uvicorn on port 8000. Compose uses explicit
 paper/sandbox settings with live execution and acceptance disabled. No `.env` or
 exchange credentials are needed. Environment files are excluded from the build
-context. The published API is read-only, uses mock data, and is intended for local
+context. The published API is read-only, consumes public crypto data, and is intended for local
 development; this Compose setup is not an authenticated public deployment.
 
 ## Checks

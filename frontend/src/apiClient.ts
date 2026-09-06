@@ -25,6 +25,15 @@ function boolean(value: unknown): boolean {
   if (typeof value !== 'boolean') throw new Error('Invalid API boolean');
   return value;
 }
+function nullableString(value: unknown): string | null {
+  return value === null ? null : string(value);
+}
+function price(value: unknown): string | null {
+  if (value === null) return null;
+  const result = string(value);
+  if (number(result) <= 0) throw new Error('Invalid API price');
+  return result;
+}
 function list<T>(value: unknown, parse: (item: unknown) => T): T[] {
   if (!Array.isArray(value)) throw new Error('Invalid API list');
   return value.map(parse);
@@ -63,7 +72,20 @@ export function getSettings(): Promise<DashboardSettings> {
 export function getVenues(): Promise<Venue[]> {
   return request('/venues', mockVenues, (value) => list(value, (item) => {
     const v = record(item);
-    return { name: string(v.name), market: string(v.market), status: string(v.status), live_execution: boolean(v.live_execution) };
+    if (v.mode !== 'public_read_only' && v.mode !== 'sandbox' && v.mode !== 'disabled') throw new Error('Invalid source mode');
+    if (v.status !== 'ok' && v.status !== 'no_data' && v.status !== 'stale' && v.status !== 'error' && v.status !== 'disabled') throw new Error('Invalid source status');
+    const age = v.data_age_ms === null ? null : number(v.data_age_ms);
+    if (age !== null && age < 0) throw new Error('Invalid source age');
+    const bid = price(v.bid);
+    const ask = price(v.ask);
+    if ((bid === null) !== (ask === null) || (bid !== null && ask !== null && Number(bid) > Number(ask))) throw new Error('Invalid order book');
+    if (v.status === 'ok' && (bid === null || age === null)) throw new Error('Missing source data');
+    return {
+      name: string(v.name), market: string(v.market), mode: v.mode, status: v.status,
+      live_execution: boolean(v.live_execution), symbol: string(v.symbol),
+      data_age_ms: age, error: nullableString(v.error), bid, ask,
+      timestamp_source: nullableString(v.timestamp_source),
+    };
   }));
 }
 function parseOpportunity(value: unknown): Opportunity {

@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, harden/mvp-safety]
+    branches: [main, harden/mvp-safety, feature/read-only-market-data]
 
 jobs:
   backend:
