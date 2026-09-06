@@ -7,10 +7,12 @@ export const mockSettings: DashboardSettings = {
   max_trade_notional_usd: 100, min_expected_net_pct: 0.1,
 };
 export const mockVenues: Venue[] = [
-  ...['binance', 'bybit', 'okx'].map((name) => ({
-    name, market: 'crypto', status: 'mock', live_execution: false,
+  ...['binance', 'bybit', 'okx'].map((name): Venue => ({
+    name, market: 'crypto', mode: 'public_read_only', status: 'no_data', live_execution: false,
+    symbol: 'BTC/USDT', data_age_ms: null, error: null, bid: null, ask: null, timestamp_source: null,
   })),
-  { name: 't_invest', market: 'russian_stocks', status: 'sandbox', live_execution: false },
+  { name: 't_invest', market: 'russian_stocks', mode: 'sandbox', status: 'no_data', live_execution: false,
+    symbol: 'SBER', data_age_ms: null, error: null, bid: null, ask: null, timestamp_source: null },
 ];
 export const mockOpportunities: OpportunityResponse = {
   status: 'ok',

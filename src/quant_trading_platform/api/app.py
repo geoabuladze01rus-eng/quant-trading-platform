@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from time import time
 
@@ -8,12 +10,38 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from quant_trading_platform.audit_log import AuditLog
 from quant_trading_platform.config import MarketScope, Settings
+from quant_trading_platform.connectors.crypto import BinanceConnector, BybitConnector, OKXConnector
+from quant_trading_platform.market_data.service import MarketDataService
 from quant_trading_platform.models import MarketQuote, MarketType
 from quant_trading_platform.risk import RiskEngine, RiskLimits
 from quant_trading_platform.safety import assert_safe_startup
 from quant_trading_platform.strategies.arbitrage import CrossVenueSpreadMonitor
 
-app = FastAPI(title="Quant Trading Platform", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    service = None
+    if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
+        service = MarketDataService(
+            [BinanceConnector(settings), BybitConnector(settings), OKXConnector(settings)],
+            _QUOTE_CACHE,
+            symbol=settings.market_data_symbol,
+            interval_seconds=settings.market_data_poll_interval_seconds,
+            max_age_ms=settings.max_market_data_age_ms,
+        )
+    app.state.market_data = service
+    try:
+        if service is not None:
+            await service.start()
+        yield
+    finally:
+        if service is not None:
+            await service.stop()
+        _QUOTE_CACHE.clear()
+        app.state.market_data = None
+
+
+app = FastAPI(title="Quant Trading Platform", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -53,17 +81,28 @@ def get_settings() -> dict[str, object]:
 
 @app.get("/venues")
 def venues() -> list[dict[str, object]]:
-    return [
-        {"name": "binance", "market": "crypto", "status": "mock", "live_execution": False},
-        {"name": "bybit", "market": "crypto", "status": "mock", "live_execution": False},
-        {"name": "okx", "market": "crypto", "status": "mock", "live_execution": False},
+    service: MarketDataService | None = getattr(app.state, "market_data", None)
+    disabled = (
+        not settings.public_market_data_enabled
+        or settings.market_scope == MarketScope.RUSSIAN_STOCKS
+    )
+    crypto = service.snapshot() if service is not None else [
         {
+            "name": venue, "market": "crypto", "status": "disabled" if disabled else "no_data",
+            "mode": "disabled" if disabled else "public_read_only", "live_execution": False,
+            "symbol": settings.market_data_symbol, "data_age_ms": None, "error": None,
+            "bid": None, "ask": None, "timestamp_source": None,
+        } for venue in ("binance", "bybit", "okx")
+    ]
+    return [*crypto, {
             "name": "t_invest",
             "market": "russian_stocks",
-            "status": "sandbox",
+            "status": "no_data",
+            "mode": "sandbox",
             "live_execution": False,
-        },
-    ]
+            "symbol": "", "data_age_ms": None, "error": None,
+            "bid": None, "ask": None, "timestamp_source": None,
+        }]
 
 
 @app.get("/opportunities")

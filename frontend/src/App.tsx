@@ -8,6 +8,35 @@ const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD
 const pct = (value: number) => `${value.toFixed(2)}%`;
 const market = (value: string) => ({ crypto: 'Crypto', russian_stocks: 'Russian market', mixed: 'Mixed' }[value] ?? value);
 const venueName = (value: string) => ({ binance: 'Binance', bybit: 'Bybit', okx: 'OKX', t_invest: 'T-Invest' }[value] ?? value);
+const sourceStatus = { ok: 'Healthy at refresh', no_data: 'No data', stale: 'Stale data', error: 'Source error', disabled: 'Disabled' };
+const sourceMode = { public_read_only: 'Public · read-only', sandbox: 'Sandbox · read-only', disabled: 'Source disabled' };
+
+function MarketSource({ venue }: { venue: Venue }) {
+  const hasQuote = venue.bid !== null && venue.ask !== null;
+  const unavailable = venue.status !== 'ok';
+  const explanation = {
+    ok: `${venue.mode === 'sandbox' ? 'Sandbox' : 'Public'} quote received. Real execution remains locked.`,
+    no_data: venue.mode === 'sandbox' ? 'Sandbox is not connected. No portfolio or market data received.' : 'Waiting for a valid public order book.',
+    stale: 'Quote is too old and excluded from opportunities.',
+    error: 'Source request or validation failed. Quotes are excluded from opportunities.',
+    disabled: 'Source polling is disabled.',
+  }[venue.status];
+  return <article className={`source-card source-${venue.status}`} aria-label={`${venueName(venue.name)} source state`}>
+    <div className="source-heading">
+      <strong>{venueName(venue.name)}</strong>
+      <span className={`status-pill source-status source-status-${venue.status}`}>{sourceStatus[venue.status]}</span>
+    </div>
+    <small>{market(venue.market)} · {isMockMode ? 'Demo fixture · source not connected' : sourceMode[venue.mode]}</small>
+    <p className="source-explanation">{explanation}</p>
+    {hasQuote && <div className={unavailable ? 'source-quote muted' : 'source-quote'}>
+      <span>{venue.symbol} {unavailable ? '· last good quote (reference only)' : '· at refresh'}</span>
+      <span>Bid {venue.bid} / Ask {venue.ask}</span>
+    </div>}
+    <small>Data age at refresh: {venue.data_age_ms === null ? 'unavailable' : `${venue.data_age_ms} ms`}</small>
+    {venue.timestamp_source && <small>Timestamp: {venue.timestamp_source === 'exchange' ? 'exchange clock' : venue.timestamp_source === 'request_start' ? 'local request start (exchange time unavailable)' : venue.timestamp_source === 'receipt' ? 'local receipt time (exchange time unavailable)' : 'unknown source'}</small>}
+    {venue.error && <small className="source-error-detail">Source reported an error. Retry occurs through backend polling.</small>}
+  </article>;
+}
 
 interface Dashboard {
   settings: DashboardSettings;
@@ -97,11 +126,9 @@ export function App() {
 
         <section className="panel-grid">
           <article className="panel">
-            <div className="panel-header"><div><p className="eyebrow">Reported venue state</p><h2>Market health</h2></div><DatabaseZap size={20} /></div>
+            <div className="panel-header"><div><p className="eyebrow">Public / sandbox source state</p><h2>Market health</h2></div><DatabaseZap size={20} /></div>
             <div className="health-list">
-              {data?.venues.map((venue) => <div className="health-row" key={venue.name}>
-                <span>{venueName(venue.name)}</span><small>{market(venue.market)}</small><b className="warn">{venue.status}</b><small>Live locked</small>
-              </div>)}
+              {data?.venues.map((venue) => <MarketSource venue={venue} key={venue.name} />)}
               {!data && <p className="empty-state">Venue health unavailable. Binance / Bybit / OKX / T-Invest are not verified.</p>}
             </div>
           </article>

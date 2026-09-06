@@ -11,7 +11,14 @@ export interface DashboardSettings {
 export interface Venue {
   name: string;
   market: string;
-  status: string;
+  mode: 'public_read_only' | 'sandbox' | 'disabled';
+  status: 'ok' | 'no_data' | 'stale' | 'error' | 'disabled';
+  symbol: string;
+  data_age_ms: number | null;
+  error: string | null;
+  bid: string | null;
+  ask: string | null;
+  timestamp_source: string | null;
   live_execution: boolean;
 }
 
