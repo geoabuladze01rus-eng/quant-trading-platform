@@ -1,7 +1,12 @@
 services:
   app:
     build: .
-    env_file:
-      - .env
-    command: python -m quant_trading_platform
+    ports:
+      - "8000:8000"
+    environment:
+      MARKET_SCOPE: mixed
+      TRADING_MODE: paper
+      LIVE_TRADING_ENABLED: "false"
+      LIVE_ORDER_ACCEPTANCE_GATE: "false"
+      T_INVEST_SANDBOX: "true"
     restart: unless-stopped

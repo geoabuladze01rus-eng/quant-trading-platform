@@ -87,6 +87,7 @@ small,
 }
 
 .main-content {
+  min-width: 0;
   padding: 28px;
   display: grid;
   gap: 22px;
@@ -131,6 +132,7 @@ h2 {
 }
 
 .mode-cluster {
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -183,6 +185,60 @@ h2 {
   border: 1px solid #202938;
   background: #0f1621;
   border-radius: 8px;
+}
+
+.data-notice {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid #304158;
+  border-radius: 8px;
+  background: #101c2c;
+}
+
+.data-notice p {
+  margin-top: 6px;
+  color: #b9c5d6;
+}
+
+.data-error {
+  border-color: #b45555;
+  background: #291a20;
+}
+
+.data-notice button {
+  flex-shrink: 0;
+  cursor: pointer;
+  border: 1px solid #5473a1;
+  border-radius: 6px;
+  padding: 10px 14px;
+  background: #1b2a40;
+  color: #e5edf6;
+}
+
+.data-notice button:focus-visible,
+.nav-item:focus-visible {
+  outline: 2px solid #8fb7ff;
+  outline-offset: 3px;
+}
+
+.empty-state {
+  margin-top: 18px;
+  color: #b9c5d6;
+}
+
+.reason-cell {
+  min-width: 240px;
+  white-space: normal;
+}
+
+@media (max-width: 650px) {
+  .data-notice {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 
 .metric-card {

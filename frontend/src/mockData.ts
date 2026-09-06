@@ -1,125 +1,34 @@
-import type { AuditEvent, ExchangeHealth, MarketScope, Opportunity, PlatformMode, SafetyState } from './types';
+import type { AuditEvent, DashboardSettings, OpportunityResponse, Risk, Venue } from './types';
 
-export const platformMode: PlatformMode = 'PAPER';
-export const marketScope: MarketScope = 'MIXED';
-export const safetyState: SafetyState = 'OK';
-
-export const exchangeHealth: ExchangeHealth[] = [
-  { name: 'Binance', group: 'Crypto', status: 'OK', latencyMs: 94 },
-  { name: 'Bybit', group: 'Crypto', status: 'OK', latencyMs: 121 },
-  { name: 'OKX', group: 'Crypto', status: 'DELAYED', latencyMs: 318 },
-  { name: 'T-Invest', group: 'Russian market', status: 'SANDBOX', latencyMs: 155 },
+// Demonstration fixtures only. Never substituted for a failed backend request.
+export const mockSettings: DashboardSettings = {
+  trading_mode: 'paper', market_scope: 'mixed', live_trading_enabled: false,
+  t_invest_sandbox: true, max_daily_loss_pct: 2,
+  max_trade_notional_usd: 100, min_expected_net_pct: 0.1,
+};
+export const mockVenues: Venue[] = [
+  ...['binance', 'bybit', 'okx'].map((name) => ({
+    name, market: 'crypto', status: 'mock', live_execution: false,
+  })),
+  { name: 't_invest', market: 'russian_stocks', status: 'sandbox', live_execution: false },
 ];
-
-export const opportunities: Opportunity[] = [
-  {
-    id: 'opp-1',
-    time: '12:01:02',
-    market: 'Crypto',
-    strategy: 'Triangular',
-    path: 'BTC/USDT -> ETH/BTC -> ETH/USDT',
-    buyVenue: 'Binance',
-    sellVenue: 'Binance',
-    grossPct: 0.34,
-    feesPct: 0.08,
-    slippagePct: 0.05,
-    netPct: 0.21,
-    notionalUsd: 1000,
-    dataAgeMs: 92,
-    decision: 'Approved',
-    reason: 'Paper trading only',
-  },
-  {
-    id: 'opp-2',
-    time: '12:02:14',
-    market: 'Crypto',
-    strategy: 'Spread',
-    path: 'ETH/USDT',
-    buyVenue: 'OKX',
-    sellVenue: 'Bybit',
-    grossPct: 0.16,
-    feesPct: 0.05,
-    slippagePct: 0.04,
-    netPct: 0.07,
-    notionalUsd: 700,
-    dataAgeMs: 318,
-    decision: 'Rejected',
-    reason: 'Below minimum edge',
-  },
-  {
-    id: 'opp-3',
-    time: '12:04:41',
-    market: 'Crypto',
-    strategy: 'Funding',
-    path: 'BTC spot/perp basis',
-    buyVenue: 'Binance',
-    sellVenue: 'Bybit',
-    grossPct: 0.22,
-    feesPct: 0.07,
-    slippagePct: 0.03,
-    netPct: 0.12,
-    notionalUsd: 500,
-    dataAgeMs: 144,
-    decision: 'Watch',
-    reason: 'Strategy disabled for MVP',
-  },
-  {
-    id: 'opp-4',
-    time: '12:06:10',
-    market: 'Russian market',
-    strategy: 'Portfolio signal',
-    path: 'SBER / bonds / cash risk rebalance',
-    buyVenue: 'T-Invest',
-    sellVenue: 'T-Invest',
-    grossPct: 0.11,
-    feesPct: 0.02,
-    slippagePct: 0.02,
-    netPct: 0.07,
-    notionalUsd: 300,
-    dataAgeMs: 155,
-    decision: 'Watch',
-    reason: 'T-Invest sandbox only',
-  },
-];
-
-export const auditEvents: AuditEvent[] = [
-  {
-    id: 'log-1',
-    time: '12:01:02',
-    market: 'Crypto',
-    event: 'Signal',
-    strategy: 'Triangular',
-    netEdge: 0.21,
-    decision: 'Approved',
-    reason: 'Passed paper trading risk checks',
-  },
-  {
-    id: 'log-2',
-    time: '12:02:14',
-    market: 'Crypto',
-    event: 'Rejected',
-    strategy: 'Spread',
-    netEdge: 0.07,
-    decision: 'Rejected',
-    reason: 'Expected net edge below threshold',
-  },
-  {
-    id: 'log-3',
-    time: '12:03:30',
-    market: 'System',
-    event: 'Health check',
-    strategy: 'System',
-    decision: 'Warning',
-    reason: 'OKX data latency above normal range',
-  },
-  {
-    id: 'log-4',
-    time: '12:06:10',
-    market: 'Russian market',
-    event: 'Sandbox signal',
-    strategy: 'Portfolio signal',
-    netEdge: 0.07,
-    decision: 'Watch',
-    reason: 'T-Invest live execution is not enabled',
-  },
-];
+export const mockOpportunities: OpportunityResponse = {
+  status: 'ok',
+  opportunities: [{
+    strategy: 'cross_venue_spread', symbol: 'BTC/USDT',
+    buy_venue: 'binance', sell_venue: 'bybit', gross_spread_pct: 0.25,
+    fees_pct: 0.2, slippage_pct: 0.05, expected_net_pct: 0,
+    max_notional_usd: 100, approved: false,
+    reason: 'Demo: net edge after fees and slippage is below the minimum 0.10%.',
+    data_age_ms: 100,
+  }],
+};
+export const mockRisk: Risk = {
+  max_daily_loss_pct: 2, max_trade_notional_usd: 100, min_expected_net_pct: 0.1,
+  live_trading_locked: true, stale_data_protection: true,
+  api_error_protection: true, balance_mismatch_protection: true,
+};
+export const mockAudit: AuditEvent[] = [{
+  id: 'demo-rejected', timestamp: 'Demo', market_scope: 'crypto',
+  event: 'rejected', strategy: 'cross_venue_spread', reason: mockOpportunities.opportunities[0].reason,
+}];
