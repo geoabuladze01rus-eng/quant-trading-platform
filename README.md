@@ -15,11 +15,34 @@ The read-only API is available at `http://127.0.0.1:8000` (`/docs` provides Open
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
 Set `VITE_API_BASE_URL=http://127.0.0.1:8000` to have the dashboard call the mock backend; without it the frontend uses its built-in mock client.
+
+The API does not start collectors on GET requests. Until a producer populates
+its in-memory quote cache, `/opportunities` returns HTTP 200 with
+`{"status":"no_data","opportunities":[]}`. Compatible quotes return an `ok`
+envelope with net edge, source data age, approval and rejection reason. Stale
+quotes remain visible as rejected candidates. The MVP cost assumptions are
+0.20% combined fees and 0.05% slippage; these are estimates, not venue fee schedules
+or depth execution guarantees. `/audit` reads existing events without adding any.
+Backend errors are displayed explicitly in the UI and never replaced by mock
+approvals. Local Vite origins on port 5173 are allowed by the API's CORS policy.
+
+## Docker
+
+```bash
+docker compose up --build
+curl http://127.0.0.1:8000/health
+```
+
+The container serves FastAPI through Uvicorn on port 8000. Compose uses explicit
+paper/sandbox settings with live execution and acceptance disabled. No `.env` or
+exchange credentials are needed. Environment files are excluded from the build
+context. The published API is read-only, uses mock data, and is intended for local
+development; this Compose setup is not an authenticated public deployment.
 
 ## Checks
 
@@ -27,10 +50,19 @@ Set `VITE_API_BASE_URL=http://127.0.0.1:8000` to have the dashboard call the moc
 ruff check .
 mypy src
 pytest
-cd frontend && npm run build
+cd frontend
+npm ci
+npm run build
 ```
 
-See [architecture](docs/ARCHITECTURE.md), [safety gates](docs/SAFETY_GATES.md), and the [roadmap](docs/ROADMAP.md).
+See [architecture](docs/ARCHITECTURE.md), [safety gates](docs/SAFETY_GATES.md),
+the [roadmap](docs/ROADMAP.md), and [competitor lessons](docs/COMPETITOR_LESSONS.md).
+
+We are not copying Cryptohopper. We are building a clearer, safer, and more
+transparent trading platform. Signals must explain their logic, net edge must
+include fees and slippage, and risk rejection reasons must remain visible.
+The full ten product principles are recorded in the competitor lessons;
+[agent rules](AGENTS.md) make them implementation requirements.
 
 Autonomous algorithmic trading platform for crypto arbitrage, Russian-market algorithmic strategies, research, backtesting, paper trading, and controlled execution.
 

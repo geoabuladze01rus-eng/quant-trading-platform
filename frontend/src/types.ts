@@ -1,40 +1,55 @@
-export type PlatformMode = 'RESEARCH' | 'BACKTEST' | 'PAPER' | 'LIVE_LOCKED' | 'LIVE_ENABLED';
-export type MarketScope = 'CRYPTO' | 'RUSSIAN_STOCKS' | 'MIXED';
-export type SafetyState = 'OK' | 'WARNING' | 'PAUSED' | 'STOPPED';
-export type RiskDecision = 'Approved' | 'Rejected' | 'Watch';
+export interface DashboardSettings {
+  trading_mode: string;
+  market_scope: string;
+  live_trading_enabled: boolean;
+  t_invest_sandbox: boolean;
+  max_daily_loss_pct: number;
+  max_trade_notional_usd: number;
+  min_expected_net_pct: number;
+}
 
-export interface ExchangeHealth {
+export interface Venue {
   name: string;
-  group: 'Crypto' | 'Russian market';
-  status: 'OK' | 'DELAYED' | 'ERROR' | 'SANDBOX';
-  latencyMs: number;
+  market: string;
+  status: string;
+  live_execution: boolean;
 }
 
 export interface Opportunity {
-  id: string;
-  time: string;
-  market: 'Crypto' | 'Russian market';
   strategy: string;
-  path: string;
-  buyVenue: string;
-  sellVenue: string;
-  grossPct: number;
-  feesPct: number;
-  slippagePct: number;
-  netPct: number;
-  notionalUsd: number;
-  dataAgeMs: number;
-  decision: RiskDecision;
+  symbol: string;
+  buy_venue: string;
+  sell_venue: string;
+  gross_spread_pct: number;
+  fees_pct: number;
+  slippage_pct: number;
+  expected_net_pct: number;
+  max_notional_usd: number;
+  approved: boolean;
   reason: string;
+  data_age_ms: number;
+}
+
+export interface OpportunityResponse {
+  status: 'no_data' | 'ok';
+  opportunities: Opportunity[];
+}
+
+export interface Risk {
+  max_daily_loss_pct: number;
+  max_trade_notional_usd: number;
+  min_expected_net_pct: number;
+  live_trading_locked: boolean;
+  stale_data_protection: boolean;
+  api_error_protection: boolean;
+  balance_mismatch_protection: boolean;
 }
 
 export interface AuditEvent {
   id: string;
-  time: string;
-  market: 'Crypto' | 'Russian market' | 'System';
+  timestamp: string;
+  market_scope: string;
   event: string;
   strategy: string;
-  netEdge?: number;
-  decision: string;
   reason: string;
 }

@@ -11,6 +11,9 @@ def assert_safe_startup(settings: Settings) -> None:
 
     if settings.trading_mode == TradingMode.LIVE and settings.max_daily_loss_pct > 2:
         raise SafetyError("Live trading max daily loss must not exceed 2%")
+    if settings.trading_mode == TradingMode.LIVE:
+        assert_live_order_allowed(settings)
+        raise SafetyError("Live execution is not implemented; use paper/read-only mode")
 
 
 def assert_live_order_allowed(settings: Settings, *, t_invest_sandbox: bool = False) -> None:
