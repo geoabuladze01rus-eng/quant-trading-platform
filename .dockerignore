@@ -13,3 +13,4 @@ frontend/dist
 dist
 build
 *.egg-info
+data/*.sqlite3*
