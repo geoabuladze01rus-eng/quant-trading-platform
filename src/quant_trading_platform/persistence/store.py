@@ -185,6 +185,7 @@ class SQLitePaperStore:
 
     def get_account(self, account_id: str, *, conn: sqlite3.Connection | None = None
                     ) -> dict[str, Any] | None:
+        _identifier(account_id)
         with self._using(conn) as db:
             row = db.execute("SELECT * FROM paper_accounts WHERE id=?", (account_id,)).fetchone()
             if row is None:
@@ -219,6 +220,8 @@ class SQLitePaperStore:
 
     def get_balance(self, account_id: str, asset: str, *, conn: sqlite3.Connection | None = None
                     ) -> dict[str, Any] | None:
+        _identifier(account_id)
+        _identifier(asset, maximum=32)
         with self._using(conn) as db:
             row = db.execute("SELECT * FROM paper_balances WHERE account_id=? AND asset=?",
                              (account_id, asset)).fetchone()
@@ -226,6 +229,7 @@ class SQLitePaperStore:
 
     def list_balances(self, account_id: str, *, conn: sqlite3.Connection | None = None
                       ) -> list[dict[str, Any]]:
+        _identifier(account_id)
         with self._using(conn) as db:
             return [dict(row) for row in db.execute(
                 "SELECT * FROM paper_balances WHERE account_id=? ORDER BY asset", (account_id,))]
@@ -257,6 +261,9 @@ class SQLitePaperStore:
             _identifier(str(value["id"]))
         if "account_id" in value:
             _identifier(str(value["account_id"]))
+        for field in ("execution_id", "correlation_id"):
+            if value.get(field):
+                _identifier(str(value[field]))
         value.update(id=identifier, account_id=account_id,
                      execution_id=str(value.get("execution_id") or ""),
                      status=str(value.get("status") or ""),
@@ -272,6 +279,7 @@ class SQLitePaperStore:
 
     def _get(self, entity: str, identifier: str, conn: sqlite3.Connection | None
              ) -> dict[str, Any] | None:
+        _identifier(identifier)
         with self._using(conn) as db:
             row = db.execute(f"SELECT payload FROM {_TABLES[entity]} WHERE id=?",
                              (identifier,)).fetchone()
@@ -279,6 +287,8 @@ class SQLitePaperStore:
 
     def _list(self, entity: str, account_id: str | None, conn: sqlite3.Connection | None
               ) -> list[dict[str, Any]]:
+        if account_id is not None:
+            _identifier(account_id)
         with self._using(conn) as db:
             query = f"SELECT payload FROM {_TABLES[entity]}"
             args: tuple[str, ...] = ()
