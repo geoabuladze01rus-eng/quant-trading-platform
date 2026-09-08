@@ -49,6 +49,10 @@ paper simulation, disabled on unusable data. `risk_score` is deliberately a
 deterministic gate label (`passed`/`blocked`), not a fabricated AI confidence score.
 Reconciliation discloses the difference between a top-of-book estimate and
 depth-weighted simulated execution; the slippage reserve is a separate cost.
+Paper Alpha also shows persistent virtual equity, available/reserved balances,
+partial fills, positions, costs, rejection reasons, and restart-safe audit. A
+preview precedes explicit PAPER ONLY confirmation, and an idempotency key prevents
+accidental duplicate accounting.
 
 The ten principles above remain requirements. Beginner usability still needs
 actual user testing; a five-minute comprehension claim is a design goal, not a

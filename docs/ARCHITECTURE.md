@@ -1,31 +1,60 @@
 # Architecture
 
-The platform has two isolated market contours: crypto (Binance, Bybit, OKX) and Russian instruments through T-Invest. `MARKET_SCOPE=mixed` permits one dashboard, but it does not combine credentials, balances, or order routing.
+The platform has isolated crypto and Russian-market contours. Binance, Bybit and
+OKX expose public/read-only market data. T-Invest exposes only sandbox/read
+boundaries. `MARKET_SCOPE=mixed` combines dashboard visibility, not credentials,
+balances, strategies, or routing.
 
-`connectors` provides read interfaces and deliberately guarded `place_order` methods. `market_data` normalizes feeds, `strategies` produces opportunities, and `risk` is the approval boundary. `paper_trading` implements hypothetical two-leg depth simulation. `audit_log` records signals and decisions. FastAPI exposes read-only dashboard data and one paper-only simulation POST.
+There is one canonical Python package, `src/quant_trading_platform`, and one depth
+simulator, `PaperExecutionEngine`. The durable `PersistentPaperService` composes
+that engine with `SQLitePaperStore`; it does not introduce exchange execution or
+import connector order methods.
 
-There is no live execution implementation in this repository.
+## Durable paper command
 
-## Paper path
+```text
+public REST books
+  → NormalizedOrderBook validation (venue, symbol, market, time, depth)
+  → CrossVenueSpreadMonitor
+  → RiskEngine
+  → read-only preview
+  → Idempotency-Key reservation
+  → SQLite BEGIN IMMEDIATE
+       account + balance gates
+       order lifecycle
+       quote/base reservations
+       depth-weighted paired fills and actual fees/slippage
+       balance and position update
+       structured audit transitions
+       accounting reconciliation snapshot
+       stored idempotent response
+    COMMIT or full ROLLBACK
+```
 
-Public REST adapters → validated `NormalizedOrderBook` snapshots → spread detector
-→ `RiskDecision` → explicit paper POST → `PaperExecutionEngine` → paired simulated
-fills → reconciliation → in-memory records and audit.
+SQLite stores accounts, balances, orders, fills, positions, audit events,
+idempotency records, and optional reconciliation snapshots. WAL, foreign keys,
+busy timeout, stable identifiers, a schema version, and exact decimal JSON are
+enabled. Initialization and account seeding are idempotent. A file path provides
+restart recovery; test databases use isolated temporary paths or isolated shared
+memory databases.
 
-There is one canonical Python package and one paper execution engine. The engine
-does not depend on connectors. It revalidates snapshots, identities, scope, timestamps,
-requested size and costs on every call. All-or-reject depth evaluation happens
-before any fill is recorded. Normalized books are immutable snapshots; HTTP workers
-fetch them off the event loop and publish them on the loop. The async POST does not
-yield while calculating or appending its report and audit events.
+Partial execution matches both spread legs to the smaller available depth. Fees
+apply only to executed notional. The remaining quote and base are reserved while
+the order is `partially_filled` and are released on cancellation. This is a local
+paired simulation, not a claim of cross-venue atomicity or settlement.
 
-Producer-side callbacks record newly observed signals and their risk decisions;
-unchanged quote pairs are deduplicated. All GET endpoints remain side-effect free.
-`explainability` converts deterministic decisions into human-readable reasons, not
-an AI forecast or numeric probability. `/opportunities?explain=true` is an opt-in
-contract extension so legacy clients and canonical contract tests remain valid.
+The database transaction is the invariant boundary: balances cannot go negative;
+fills, balance changes, positions, audit, and the stored response commit together.
+Failures roll the complete command back. A same-key replay reads its stored
+response; a conflicting payload is rejected.
 
-The service is a single-process local-development prototype. Paper history is
-bounded to 1,000 reports/positions; audit keeps the latest 10,000 events. Neither
-has persistence, cross-process consistency nor transactional crash recovery.
-See [paper trading](PAPER_TRADING.md) for accounting assumptions and next steps.
+## Read and compatibility paths
+
+Persistent APIs expose account, balances, orders, fills, positions, performance,
+reconciliation, filtered audit, preview, create, and cancellation. GET endpoints
+do not write. The earlier in-memory `/paper/orders/simulate` contract remains for
+compatibility and is explicitly not the durable portfolio path.
+
+Market quote snapshots and unchanged-signal deduplication remain in memory because
+they are transient feed state. Durable trading/audit state does not rely on those
+caches. Live execution is not implemented.
