@@ -363,10 +363,13 @@ def _position_view(position: dict[str, object]) -> dict[str, object]:
     return serialize_record(
         {
             **position,
+            "status": "open" if quantity else "closed",
             "avg_entry_price": basis,
+            "average_price": basis,
             "current_price": mark,
             "market_value_usdt": market_value,
             "unrealized_pnl_usdt": unrealized,
+            "realized_pnl_usdt": "0",
         }
     )
 
@@ -407,6 +410,7 @@ def _paper_result(
         fill = dict(original)
         fill.update(
             fill_id=fill.get("fill_id", fill.get("id")),
+            qty=fill.get("quantity", "0"),
             fee_usdt=fill.get("fee_usd", "0"),
             notional_usdt=fill.get("notional_usd", "0"),
             paper_only=True,
@@ -588,7 +592,36 @@ async def preview_persistent_paper_order(
         )
     except PaperCommandError as error:
         raise _paper_command_http_error(error) from error
-    return serialize_record({**result, "paper_only": True, "live_trading_enabled": False})
+    account = service.account(settings.paper_account_id)
+    preview_result: dict[str, object] = {
+        **result,
+        "order": {
+            "id": "",
+            "order_id": "",
+            "symbol": body.symbol,
+            "status": result["status"],
+            "reason_code": result["reason_code"],
+            "human_reason": result["human_reason"],
+            "buy_venue": body.buy_venue.value,
+            "sell_venue": body.sell_venue.value,
+            "notional_usdt": str(body.notional_usdt),
+            "requested_notional_usd": str(body.notional_usdt),
+            "simulated_notional_usd": result["simulated_notional_usd"],
+            "required_quote": result["required_quote"],
+            "required_base": result["required_base"],
+            "gross_edge": item.expected_gross_pct,
+            "fees": item.fees_pct,
+            "slippage": item.slippage_pct,
+            "net_edge": item.expected_net_pct,
+            "paper_only": True,
+        },
+        "fills": [],
+        "account": account,
+        "balances": account["balances"],
+        "positions": service.store.list_positions(settings.paper_account_id),
+        "accounting_reconciliation": service.reconcile(settings.paper_account_id),
+    }
+    return _paper_result(service, preview_result)
 
 
 @app.post("/paper/orders")
@@ -683,6 +716,7 @@ def paper_fills() -> list[dict[str, object]]:
                 {
                     **fill,
                     "fill_id": fill.get("fill_id", fill.get("id")),
+                    "qty": fill.get("quantity", "0"),
                     "fee_usdt": fill.get("fee_usd", "0"),
                     "notional_usdt": fill.get("notional_usd", "0"),
                     "paper_only": True,
