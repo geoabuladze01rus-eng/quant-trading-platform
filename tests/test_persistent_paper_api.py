@@ -90,6 +90,31 @@ async def test_durable_command_replays_without_double_debit_or_fill(durable_clie
     assert len(store.list_orders()) == 1
     assert len(store.list_fills()) == 2
     assert len(store.list_audit()) == 3
+    required_audit = {
+        "event_id",
+        "timestamp",
+        "actor",
+        "actor_type",
+        "event_type",
+        "strategy",
+        "symbol",
+        "venue",
+        "market_type",
+        "order_id",
+        "opportunity_id",
+        "decision",
+        "reason_code",
+        "human_reason",
+        "risk_score",
+        "gross_edge",
+        "fees",
+        "slippage",
+        "net_edge",
+        "data_age_ms",
+        "correlation_id",
+        "algorithm_version",
+    }
+    assert all(required_audit <= event.keys() for event in store.list_audit())
 
 
 @pytest.mark.asyncio

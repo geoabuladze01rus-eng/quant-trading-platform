@@ -2,6 +2,7 @@
 
 import sqlite3
 from dataclasses import asdict
+from datetime import UTC, datetime
 from decimal import Decimal
 from time import time
 from typing import Any, cast
@@ -252,6 +253,7 @@ class PersistentPaperService:
             self.store.insert_order(order, conn=conn)
             self._audit(order, actor, "paper_order_created", conn)
             report = self._plan(opportunity, buy_book, sell_book, notional_usd, settings)
+            order["data_age_ms"] = report.reconciliation.data_age_ms
             quote_reserve, base_reserve, funding_error = (
                 self._funding(command, opportunity, buy_book, conn)
                 if report.fills
@@ -399,6 +401,7 @@ class PersistentPaperService:
                 "execution_id": order["execution_id"],
                 "correlation_id": order["order_id"],
                 "event_id": str(uuid4()),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "actor": actor,
                 "actor_type": "user" if actor != "system" else "system",
                 "event_type": action,
@@ -416,7 +419,9 @@ class PersistentPaperService:
                 "fees": order.get("fees"),
                 "slippage": order.get("slippage"),
                 "net_edge": order.get("net_edge"),
-                "data_age_ms": order.get("reconciliation", {}).get("data_age_ms"),
+                "data_age_ms": order.get(
+                    "data_age_ms", order.get("reconciliation", {}).get("data_age_ms")
+                ),
                 "algorithm_version": order.get("algorithm_version", "paper-alpha-v1"),
             },
             conn=conn,
