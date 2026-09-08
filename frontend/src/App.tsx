@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 
 import { getAudit, getOpportunities, getRisk, getSettings, getVenues, isMockMode } from './apiClient';
 import type { AuditEvent, DashboardSettings, OpportunityResponse, Risk, Venue } from './types';
+import { PaperExecution } from './PaperExecution';
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const pct = (value: number) => `${value.toFixed(2)}%`;
@@ -51,11 +52,13 @@ export function App() {
   const [error, setError] = useState('');
   const [updatedAt, setUpdatedAt] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [receivedAt, setReceivedAt] = useState(0);
 
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     async function load() {
+      const requestedAt = Date.now();
       try {
         const [settings, venues, opportunities, risk, audit] = await Promise.all([
           getSettings(), getVenues(), getOpportunities(), getRisk(), getAudit(),
@@ -67,6 +70,7 @@ export function App() {
           throw new Error('Unsafe backend configuration. Paper/sandbox safety settings could not be confirmed.');
         }
         setData({ settings, venues, opportunities, risk, audit });
+        setReceivedAt(requestedAt);
         setError('');
         setUpdatedAt(new Date().toLocaleTimeString());
       } catch (cause) {
@@ -105,13 +109,13 @@ export function App() {
           <div className="mode-cluster" aria-label="Platform state">
             <span className="status-pill paper">Mode: {data?.settings.trading_mode ?? 'unknown'}</span>
             <span className="status-pill paper">Scope: {data ? market(data.settings.market_scope) : 'unknown'}</span>
-            <span className="status-pill locked"><Lock size={14} /> Live locked — read-only UI</span>
+            <span className="status-pill locked"><Lock size={14} /> Live locked · paper simulation only</span>
           </div>
         </header>
 
         <section className={`data-notice ${error ? 'data-error' : ''}`} role={error ? 'alert' : 'status'}>
           <div>
-            <strong>{error ? 'Data unavailable — execution remains locked' : isMockMode ? 'Demo / mock data' : data ? 'Backend connected — read-only' : 'Connecting to backend…'}</strong>
+            <strong>{error ? 'Data unavailable — execution remains locked' : isMockMode ? 'Demo / mock data' : data ? 'Backend connected — public data / paper only' : 'Connecting to backend…'}</strong>
             <p>{error || (isMockMode ? 'Illustrative fixtures only. Configure VITE_API_BASE_URL to read backend data.' : `Last successful refresh: ${updatedAt || 'pending'}. Refreshes every 10 seconds.`)}</p>
           </div>
           <button type="button" onClick={() => setRefresh((value) => value + 1)}>Refresh data</button>
@@ -146,7 +150,7 @@ export function App() {
         <section className="panel" id="opportunities">
           <div className="panel-header"><div><p className="eyebrow">After estimated fees and slippage</p><h2>Opportunities</h2></div><AlertTriangle size={20} /></div>
           <p className="settings-note">Spread compares the ask on the buy venue with the bid on the sell venue. Backend estimates deduct 0.20% fees and 0.05% slippage.</p>
-          <p className="settings-note">Approved means eligible for paper simulation; it does not enable an order.</p>
+          <p className="settings-note">Approved means eligible for paper simulation, subject to fresh quotes and a new server risk check.</p>
           {!rows.length ? <p className="empty-state">{data ? 'No data: no eligible opportunities from current market quotes.' : 'Opportunities unavailable. Waiting for a trusted backend response.'}</p> :
             <div className="table-wrap"><table>
               <thead><tr><th>Strategy</th><th>Symbol</th><th>Buy / sell venues</th><th>Gross</th><th>Fees</th><th>Slippage</th><th>Net edge</th><th>Max notional</th><th>Data age</th><th>Risk decision</th><th>Reason</th></tr></thead>
@@ -159,6 +163,7 @@ export function App() {
             </table></div>}
         </section>
 
+        {data && <PaperExecution opportunities={rows} venues={data.venues} audit={data.audit} receivedAt={receivedAt} maxAge={data.settings.max_market_data_age_ms} />}
         <section className="panel-grid" id="risk">
           <article className="panel">
             <div className="panel-header"><div><p className="eyebrow">Protections</p><h2>Risk center</h2></div><ShieldCheck size={20} /></div>
@@ -184,10 +189,11 @@ export function App() {
 
         <section className="panel" id="audit">
           <div className="panel-header"><div><p className="eyebrow">Explain every action</p><h2>Audit log</h2></div><FileText size={20} /></div>
+          {data && <p>Latest {Math.min(100, data.audit.length)} of {data.audit.length} retained events. Full retained history is available from GET /audit.</p>}
           {!data?.audit.length ? <p className="empty-state">{data ? 'No audit events recorded.' : 'Audit data unavailable.'}</p> :
-            <div className="table-wrap"><table><thead><tr><th>Timestamp</th><th>Market</th><th>Event</th><th>Strategy</th><th>Reason</th></tr></thead>
-              <tbody>{data.audit.map((event) => <tr key={event.id}>
-                <td>{event.timestamp}</td><td>{market(event.market_scope)}</td><td>{event.event}</td><td>{event.strategy}</td><td className="reason-cell">{event.reason}</td>
+            <div className="table-wrap"><table><thead><tr><th>Timestamp</th><th>Market</th><th>Who</th><th>Event / decision</th><th>Strategy</th><th>Reason</th></tr></thead>
+              <tbody>{data.audit.slice(0, 100).map((event) => <tr key={event.id}>
+                <td>{event.timestamp}</td><td>{market(event.market_scope)}</td><td>{event.who ?? 'Unknown actor'}</td><td>{event.event} / {event.decision ?? 'unknown'}</td><td>{event.strategy}</td><td className="reason-cell">{event.reason}</td>
               </tr>)}</tbody>
             </table></div>}
         </section>

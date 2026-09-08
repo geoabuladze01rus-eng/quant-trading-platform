@@ -39,3 +39,17 @@ The user should never wonder:
 - why the bot did not act;
 - whether real money is at risk;
 - whether the numbers include fees and slippage.
+
+## Current implementation evidence
+
+The explainable opportunity contract names the source venues, gross edge,
+estimated fees/slippage, net edge and the exact risk rejection. An advanced panel
+exposes quotes, depth, timestamps and correlated audit events. The only action is
+paper simulation, disabled on unusable data. `risk_score` is deliberately a
+deterministic gate label (`passed`/`blocked`), not a fabricated AI confidence score.
+Reconciliation discloses the difference between a top-of-book estimate and
+depth-weighted simulated execution; the slippage reserve is a separate cost.
+
+The ten principles above remain requirements. Beginner usability still needs
+actual user testing; a five-minute comprehension claim is a design goal, not a
+measured result. No marketplace or copy-trading performance is advertised.

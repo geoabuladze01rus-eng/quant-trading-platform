@@ -2,21 +2,26 @@ import type { AuditEvent, DashboardSettings, OpportunityResponse, Risk, Venue } 
 
 // Demonstration fixtures only. Never substituted for a failed backend request.
 export const mockSettings: DashboardSettings = {
+  max_market_data_age_ms: 1000,
   trading_mode: 'paper', market_scope: 'mixed', live_trading_enabled: false,
   t_invest_sandbox: true, max_daily_loss_pct: 2,
   max_trade_notional_usd: 100, min_expected_net_pct: 0.1,
 };
 export const mockVenues: Venue[] = [
   ...['binance', 'bybit', 'okx'].map((name): Venue => ({
+    depth_status: 'unavailable', bid_levels: 0, ask_levels: 0,
     name, market: 'crypto', mode: 'public_read_only', status: 'no_data', live_execution: false,
     symbol: 'BTC/USDT', data_age_ms: null, error: null, bid: null, ask: null, timestamp_source: null,
   })),
   { name: 't_invest', market: 'russian_stocks', mode: 'sandbox', status: 'no_data', live_execution: false,
+    depth_status: 'unavailable', bid_levels: 0, ask_levels: 0,
     symbol: 'SBER', data_age_ms: null, error: null, bid: null, ask: null, timestamp_source: null },
 ];
 export const mockOpportunities: OpportunityResponse = {
   status: 'ok',
   opportunities: [{
+    id: 'demo-rejected', summary: 'Demo: fees and slippage consume the entire spread.',
+    reason_code: 'insufficient_net_edge', reason_text: 'Demo: net edge is below the minimum.', risk_score: 'blocked', simulation_notional_usd: '10',
     strategy: 'cross_venue_spread', symbol: 'BTC/USDT',
     buy_venue: 'binance', sell_venue: 'bybit', gross_spread_pct: 0.25,
     fees_pct: 0.2, slippage_pct: 0.05, expected_net_pct: 0,

@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, harden/mvp-safety, feature/read-only-market-data]
+    branches: [main, harden/mvp-safety, 'feature/**']
 
 jobs:
   backend:
@@ -21,6 +21,8 @@ jobs:
         run: mypy src
       - name: Tests
         run: pytest
+      - name: Compile
+        run: python -m compileall src
   frontend:
     runs-on: ubuntu-latest
     defaults:
