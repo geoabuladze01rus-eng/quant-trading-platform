@@ -8,15 +8,17 @@ from hashlib import sha256
 from time import time
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from quant_trading_platform.audit_log import AuditLog
+from quant_trading_platform.audit_log import AuditLog, PersistentAuditLog
 from quant_trading_platform.config import MarketScope, Settings, TradingMode
 from quant_trading_platform.connectors.crypto import BinanceConnector, BybitConnector, OKXConnector
 from quant_trading_platform.explainability import explain_opportunity, explain_paper_execution
+from quant_trading_platform.explainability.reasons import human_reason
+from quant_trading_platform.market_data.models import NormalizedOrderBook
 from quant_trading_platform.market_data.service import MarketDataService
 from quant_trading_platform.models import (
     ArbitrageOpportunity,
@@ -26,6 +28,9 @@ from quant_trading_platform.models import (
     normalize_symbol,
 )
 from quant_trading_platform.paper_trading import PaperExecutionEngine
+from quant_trading_platform.paper_trading.models import PaperCommandError
+from quant_trading_platform.paper_trading.service import PersistentPaperService
+from quant_trading_platform.persistence import SQLitePaperStore
 from quant_trading_platform.risk import RiskDecision, RiskEngine, RiskLimits
 from quant_trading_platform.safety import assert_safe_startup
 from quant_trading_platform.strategies.arbitrage import CrossVenueSpreadMonitor
@@ -33,6 +38,19 @@ from quant_trading_platform.strategies.arbitrage import CrossVenueSpreadMonitor
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    assert_safe_startup(settings)
+    paper_store = SQLitePaperStore(settings.paper_database_path)
+    paper_store.seed_account(
+        settings.paper_account_id,
+        {
+            "USDT": settings.paper_initial_usdt,
+            "BTC": settings.paper_initial_btc,
+            "ETH": settings.paper_initial_eth,
+        },
+    )
+    app.state.paper_store = paper_store
+    app.state.paper_service = PersistentPaperService(paper_store)
+    app.state.persistent_audit = PersistentAuditLog(paper_store)
     service = None
     if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
         service = MarketDataService(
@@ -54,6 +72,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _QUOTE_CACHE.clear()
         _LAST_SIGNALS.clear()
         app.state.market_data = None
+        app.state.paper_service = None
+        app.state.persistent_audit = None
+        app.state.paper_store = None
+        paper_store.close()
 
 
 app = FastAPI(title="Quant Trading Platform", version="0.1.0", lifespan=lifespan)
@@ -61,7 +83,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["GET", "POST"],
-    allow_headers=["Accept", "Content-Type"],
+    allow_headers=["Accept", "Content-Type", "Idempotency-Key"],
 )
 settings = Settings()
 assert_safe_startup(settings)
@@ -213,11 +235,36 @@ def record_detected_opportunities() -> None:
         for event in (
             "opportunity_detected", "risk_approved" if candidate["approved"] else "risk_rejected",
         ):
-            audit_log.record(
-                event, candidate["reason_text"], settings.market_scope, candidate["strategy"],
-                who="market_data_producer", decision=candidate["risk_score"],
-                reason_code=candidate["reason_code"], opportunity_id=candidate["id"],
+            persistent: PersistentAuditLog | None = getattr(
+                app.state, "persistent_audit", None
             )
+            if persistent is None:
+                audit_log.record(
+                    event, candidate["reason_text"], settings.market_scope, candidate["strategy"],
+                    who="market_data_producer", decision=candidate["risk_score"],
+                    reason_code=candidate["reason_code"], opportunity_id=candidate["id"],
+                )
+            else:
+                persistent.record(
+                    event,
+                    str(candidate["reason_code"]),
+                    actor="market_data_producer",
+                    actor_type="system",
+                    strategy=str(candidate["strategy"]),
+                    symbol=str(candidate["symbol"]),
+                    venue=f"{candidate['buy_venue']}->{candidate['sell_venue']}",
+                    market_type="crypto",
+                    opportunity_id=str(candidate["id"]),
+                    decision=str(candidate["risk_score"]),
+                    risk_score=str(candidate["risk_score"]),
+                    gross_edge=str(candidate["gross_spread_pct"]),
+                    fees=str(candidate["fees_pct"]),
+                    slippage=str(candidate["slippage_pct"]),
+                    net_edge=str(candidate["expected_net_pct"]),
+                    data_age_ms=int(candidate["data_age_ms"]),
+                    correlation_id=str(candidate["id"]),
+                    algorithm_version=settings.paper_algorithm_version,
+                )
 
 
 class PaperSimulationRequest(BaseModel):
@@ -235,11 +282,188 @@ class PaperSimulationRequest(BaseModel):
         return normalize_symbol(value)
 
 
+class PersistentPaperOrderRequest(BaseModel):
+    """Local paper intent; price, cost, risk and execution fields remain server-owned."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    symbol: str = Field(min_length=3, max_length=32)
+    buy_venue: Venue
+    sell_venue: Venue
+    notional_usdt: Decimal = Field(gt=0, max_digits=24, decimal_places=12)
+
+    @field_validator("symbol")
+    @classmethod
+    def canonical_symbol(cls, value: str) -> str:
+        return normalize_symbol(value)
+
+
+def _trusted_paper_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if origin is not None and origin not in (
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ):
+        raise HTTPException(403, "Untrusted browser origin")
+
+
+def _persistent_paper_service() -> PersistentPaperService:
+    service: PersistentPaperService | None = getattr(app.state, "paper_service", None)
+    if service is None:
+        raise HTTPException(503, "Persistent paper service is unavailable")
+    return service
+
+
+def _paper_market_context(
+    symbol: str,
+    buy_venue: Venue,
+    sell_venue: Venue,
+    notional: Decimal,
+) -> tuple[ArbitrageOpportunity, NormalizedOrderBook | None, NormalizedOrderBook | None]:
+    market_data: MarketDataService | None = getattr(app.state, "market_data", None)
+    buy_book = (
+        None if market_data is None else market_data.book_for_simulation(buy_venue, symbol)
+    )
+    sell_book = (
+        None if market_data is None else market_data.book_for_simulation(sell_venue, symbol)
+    )
+    item = ArbitrageOpportunity(
+        "cross_venue_spread",
+        symbol,
+        buy_venue,
+        sell_venue,
+        Decimal("0"),
+        Decimal("-0.25"),
+        notional,
+        now_ms(),
+        fees_pct=Decimal("0.20"),
+        slippage_pct=Decimal("0.05"),
+    )
+    if buy_book is not None and sell_book is not None:
+        try:
+            buy, sell = buy_book.to_quote(), sell_book.to_quote()
+            item = CrossVenueSpreadMonitor().detect(
+                buy, sell, Decimal("0.20"), Decimal("0.05")
+            )
+            item = replace(item, max_notional_usd=notional)
+        except (ValueError, IndexError):
+            pass
+    return item, buy_book, sell_book
+
+
+def _position_view(position: dict[str, object]) -> dict[str, object]:
+    quantity = Decimal(str(position.get("quantity", "0")))
+    mark = position.get("mark_price")
+    basis = position.get("cost_basis")
+    market_value = None if mark is None else quantity * Decimal(str(mark))
+    unrealized = (
+        None
+        if mark is None or basis is None
+        else quantity * (Decimal(str(mark)) - Decimal(str(basis)))
+    )
+    return serialize_record(
+        {
+            **position,
+            "avg_entry_price": basis,
+            "current_price": mark,
+            "market_value_usdt": market_value,
+            "unrealized_pnl_usdt": unrealized,
+        }
+    )
+
+
+def _paper_result(
+    service: PersistentPaperService, result: dict[str, object]
+) -> dict[str, object]:
+    raw_account = result.get("account")
+    account = (
+        dict(raw_account)
+        if isinstance(raw_account, dict)
+        else service.account(settings.paper_account_id)
+    )
+    raw_positions = result.get("positions")
+    stored_positions = (
+        raw_positions
+        if isinstance(raw_positions, list)
+        else service.store.list_positions(settings.paper_account_id)
+    )
+    positions = [
+        _position_view(position)
+        for position in stored_positions
+        if isinstance(position, dict)
+    ]
+    raw_order = result.get("order", {})
+    order = dict(raw_order) if isinstance(raw_order, dict) else {}
+    order.update(
+        id=order.get("id", order.get("order_id")),
+        notional_usdt=order.get("requested_notional_usd", "0"),
+        remaining_notional_usdt=order.get("remaining_notional_usd", "0"),
+        paper_only=True,
+    )
+    fills: list[dict[str, object]] = []
+    raw_fills = result.get("fills", [])
+    for original in raw_fills if isinstance(raw_fills, list) else []:
+        if not isinstance(original, dict):
+            continue
+        fill = dict(original)
+        fill.update(
+            fill_id=fill.get("fill_id", fill.get("id")),
+            fee_usdt=fill.get("fee_usd", "0"),
+            notional_usdt=fill.get("notional_usd", "0"),
+            paper_only=True,
+        )
+        fills.append(fill)
+    code = str(result.get("reason_code", order.get("reason_code", "invalid_order")))
+    stored_reconciliation = result.get("accounting_reconciliation")
+    reconciliation = (
+        stored_reconciliation
+        if isinstance(stored_reconciliation, dict)
+        else service.reconcile(settings.paper_account_id)
+    )
+    explanation = {
+        "summary": human_reason(code),
+        "paper_only": True,
+        "calculation": {
+            "gross_edge": order.get("gross_edge"),
+            "fees": order.get("fees"),
+            "slippage": order.get("slippage"),
+            "net_edge": order.get("net_edge"),
+        },
+        "risk": {"decision": order.get("status"), "reason_code": code},
+        "reasons": [human_reason(code)],
+        "technical": {
+            "execution_id": order.get("execution_id"),
+            "algorithm_version": order.get("algorithm_version"),
+        },
+    }
+    return serialize_record(
+        {
+            **result,
+            "order": order,
+            "fills": fills,
+            "account": account,
+            "balances": account["balances"],
+            "positions": positions,
+            "reconciliation": reconciliation,
+            "explanation": explanation,
+            "paper_only": True,
+            "live_trading_enabled": False,
+        }
+    )
+
+
+def _paper_command_http_error(error: PaperCommandError) -> HTTPException:
+    status = 404 if error.reason_code in ("account_not_found", "order_not_found") else 409
+    if error.reason_code in ("invalid_order", "market_mismatch"):
+        status = 422
+    return HTTPException(
+        status,
+        {"reason_code": error.reason_code, "human_reason": human_reason(error.reason_code)},
+    )
+
+
 @app.post("/paper/orders/simulate")
 async def simulate_paper_order(body: PaperSimulationRequest, request: Request) -> dict[str, object]:
-    origin = request.headers.get("origin")
-    if origin is not None and origin not in ("http://localhost:5173", "http://127.0.0.1:5173"):
-        raise HTTPException(403, "Untrusted browser origin")
+    _trusted_paper_origin(request)
     service: MarketDataService | None = getattr(app.state, "market_data", None)
     buy_book = None if service is None else service.book_for_simulation(body.buy_venue, body.symbol)
     sell_book = (
@@ -295,13 +519,177 @@ def serialize_record(record: dict[str, object]) -> dict[str, object]:
     return dict(jsonable_encoder(record, custom_encoder={Decimal: str}))
 
 
+@app.get("/paper/account")
+def paper_account() -> dict[str, object]:
+    return serialize_record(_persistent_paper_service().account(settings.paper_account_id))
+
+
+@app.get("/paper/balances")
+def paper_balances() -> list[dict[str, object]]:
+    account = _persistent_paper_service().account(settings.paper_account_id)
+    return list(account["balances"])
+
+
+@app.get("/paper/positions")
+def paper_positions() -> list[dict[str, object]]:
+    service = _persistent_paper_service()
+    return [
+        _position_view(position)
+        for position in service.store.list_positions(settings.paper_account_id)
+    ]
+
+
+@app.get("/paper/performance")
+def paper_performance() -> dict[str, object]:
+    service = _persistent_paper_service()
+    account = service.account(settings.paper_account_id)
+    orders = service.store.list_orders(settings.paper_account_id)
+    return serialize_record(
+        {
+            "account_id": settings.paper_account_id,
+            "virtual_equity_usdt": account["virtual_equity_usdt"],
+            "realized_pnl_usdt": account["realized_pnl_usdt"],
+            "unrealized_pnl_usdt": account["unrealized_pnl_usdt"],
+            "daily_pnl_usdt": account["realized_pnl_usdt"],
+            "fees_paid_usdt": account["fees_paid_usdt"],
+            "slippage_cost_usdt": account["slippage_cost_usdt"],
+            "filled_orders": sum(order["status"] == "filled" for order in orders),
+            "partially_filled_orders": sum(
+                order["status"] == "partially_filled" for order in orders
+            ),
+            "rejected_orders": sum(order["status"] == "rejected" for order in orders),
+            "paper_only": True,
+        }
+    )
+
+
+@app.get("/paper/reconciliation")
+def paper_reconciliation() -> dict[str, object]:
+    return serialize_record(_persistent_paper_service().reconcile(settings.paper_account_id))
+
+
+@app.post("/paper/orders/preview")
+async def preview_persistent_paper_order(
+    body: PersistentPaperOrderRequest, request: Request
+) -> dict[str, object]:
+    _trusted_paper_origin(request)
+    service = _persistent_paper_service()
+    item, buy_book, sell_book = _paper_market_context(
+        body.symbol, body.buy_venue, body.sell_venue, body.notional_usdt
+    )
+    try:
+        result = service.preview(
+            item,
+            buy_book,
+            sell_book,
+            notional_usd=body.notional_usdt,
+            settings=settings,
+            account_id=settings.paper_account_id,
+        )
+    except PaperCommandError as error:
+        raise _paper_command_http_error(error) from error
+    return serialize_record({**result, "paper_only": True, "live_trading_enabled": False})
+
+
+@app.post("/paper/orders")
+async def create_persistent_paper_order(
+    body: PersistentPaperOrderRequest,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+) -> dict[str, object]:
+    _trusted_paper_origin(request)
+    service = _persistent_paper_service()
+    item, buy_book, sell_book = _paper_market_context(
+        body.symbol, body.buy_venue, body.sell_venue, body.notional_usdt
+    )
+    try:
+        result = service.execute(
+            item,
+            buy_book,
+            sell_book,
+            notional_usd=body.notional_usdt,
+            settings=settings,
+            idempotency_key=idempotency_key,
+            account_id=settings.paper_account_id,
+            actor="local_paper_user",
+        )
+    except PaperCommandError as error:
+        raise _paper_command_http_error(error) from error
+    return _paper_result(service, result)
+
+
 @app.get("/paper/orders")
 def paper_orders() -> list[dict[str, object]]:
+    service: PersistentPaperService | None = getattr(app.state, "paper_service", None)
+    if service is not None:
+        return [
+            serialize_record(
+                {
+                    **order,
+                    "id": order.get("id", order.get("order_id")),
+                    "notional_usdt": order.get("requested_notional_usd", "0"),
+                    "remaining_notional_usdt": order.get("remaining_notional_usd", "0"),
+                    "paper_only": True,
+                }
+            )
+            for order in service.store.list_orders(settings.paper_account_id)
+        ]
     return [serialize_record(asdict(order)) for order in paper_engine.orders]
+
+
+@app.get("/paper/orders/{order_id}")
+def paper_order(order_id: str) -> dict[str, object]:
+    service = _persistent_paper_service()
+    order = service.store.get_order(order_id)
+    if order is None or order["account_id"] != settings.paper_account_id:
+        raise HTTPException(404, "Paper order not found")
+    return serialize_record(
+        {
+            **order,
+            "id": order.get("id", order.get("order_id")),
+            "notional_usdt": order.get("requested_notional_usd", "0"),
+            "remaining_notional_usdt": order.get("remaining_notional_usd", "0"),
+            "paper_only": True,
+        }
+    )
+
+
+@app.post("/paper/orders/{order_id}/cancel")
+async def cancel_persistent_paper_order(
+    order_id: str,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+) -> dict[str, object]:
+    _trusted_paper_origin(request)
+    service = _persistent_paper_service()
+    try:
+        result = service.cancel(
+            order_id,
+            idempotency_key=idempotency_key,
+            account_id=settings.paper_account_id,
+            actor="local_paper_user",
+        )
+    except PaperCommandError as error:
+        raise _paper_command_http_error(error) from error
+    return _paper_result(service, result)
 
 
 @app.get("/paper/fills")
 def paper_fills() -> list[dict[str, object]]:
+    service: PersistentPaperService | None = getattr(app.state, "paper_service", None)
+    if service is not None:
+        return [
+            serialize_record(
+                {
+                    **fill,
+                    "fill_id": fill.get("fill_id", fill.get("id")),
+                    "fee_usdt": fill.get("fee_usd", "0"),
+                    "notional_usdt": fill.get("notional_usd", "0"),
+                    "paper_only": True,
+                }
+            )
+            for fill in service.store.list_fills(settings.paper_account_id)
+        ]
     return [serialize_record(asdict(fill)) for fill in paper_engine.fills]
 
 
@@ -328,6 +716,37 @@ def risk() -> dict[str, object]:
 
 
 @app.get("/audit")
-def audit() -> list[dict[str, str]]:
-    # read-only: return deep copies, never record on GET
-    return audit_log.list()
+def audit(
+    limit: int | None = None,
+    offset: int = 0,
+    event_type: str | None = None,
+    order_id: str | None = None,
+    reason_code: str | None = None,
+    correlation_id: str | None = None,
+) -> list[dict[str, object]] | dict[str, object]:
+    """Read detached audit snapshots; GET never records or mutates journal state."""
+    persistent: PersistentAuditLog | None = getattr(app.state, "persistent_audit", None)
+    if persistent is None:
+        return [dict(item) for item in audit_log.list()]
+    page_size = 100 if limit is None else limit
+    try:
+        items = persistent.list(
+            page_size,
+            offset,
+            event_type=event_type,
+            order_id=order_id,
+            reason_code=reason_code,
+            correlation_id=correlation_id,
+        )
+        total = persistent.count(
+            event_type=event_type,
+            order_id=order_id,
+            reason_code=reason_code,
+            correlation_id=correlation_id,
+        )
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    no_filters = not any((event_type, order_id, reason_code, correlation_id))
+    if limit is None and no_filters and offset == 0:
+        return items
+    return {"items": items, "total": total, "limit": page_size, "offset": offset}

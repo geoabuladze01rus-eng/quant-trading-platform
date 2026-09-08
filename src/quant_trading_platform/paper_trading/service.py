@@ -367,6 +367,7 @@ class PersistentPaperService:
                         "account": self.account(account_id, conn=conn),
                     }
                 )
+            response.update(self._snapshot(account_id, conn))
             self.store.complete_idempotency(account_id, idempotency_key, response, conn=conn)
             return dict(response)
 
@@ -468,8 +469,31 @@ class PersistentPaperService:
                     "account": self.account(account_id, conn=conn),
                 }
             )
+            response.update(self._snapshot(account_id, conn))
             self.store.complete_idempotency(account_id, idempotency_key, response, conn=conn)
             return dict(response)
+
+    def _snapshot(self, account_id: str, conn: sqlite3.Connection) -> dict[str, Any]:
+        account = self.account(account_id, conn=conn)
+        positions = self.store.list_positions(account_id, conn=conn)
+        reconciliation = reconcile_records(
+            self._account(account_id, conn),
+            self.store.list_balances(account_id, conn=conn),
+            self.store.list_orders(account_id, conn=conn),
+            self.store.list_fills(account_id, conn=conn),
+            positions,
+        )
+        return cast(
+            dict[str, Any],
+            _plain(
+                {
+                    "account": account,
+                    "balances": account["balances"],
+                    "positions": positions,
+                    "accounting_reconciliation": reconciliation,
+                }
+            ),
+        )
 
     def _positions(
         self, account_id: str, account: dict[str, Any], conn: sqlite3.Connection
