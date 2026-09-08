@@ -20,9 +20,9 @@ jobs:
       - name: Type check
         run: mypy src
       - name: Tests
-        run: pytest
+        run: pytest -q
       - name: Compile
-        run: python -m compileall src
+        run: python -m compileall src tests
   frontend:
     runs-on: ubuntu-latest
     defaults:
