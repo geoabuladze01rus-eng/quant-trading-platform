@@ -56,6 +56,8 @@ curl -X POST http://127.0.0.1:8000/paper/orders \
   -d '{"symbol":"BTC/USDT","buy_venue":"binance","sell_venue":"okx","notional_usdt":"10"}'
 curl http://127.0.0.1:8000/paper/account
 curl http://127.0.0.1:8000/paper/reconciliation
+curl http://127.0.0.1:8000/paper/execution-runtime
+curl http://127.0.0.1:8000/paper/execution-groups
 curl 'http://127.0.0.1:8000/audit?limit=50&offset=0'
 ```
 
@@ -63,6 +65,12 @@ The legacy `POST /paper/orders/simulate` remains available for compatibility as 
 volatile, unfunded preview. New product flows use the persistent endpoints. GET
 requests are read-only. See [Paper Trading](docs/PAPER_TRADING.md) for accounting,
 partial-fill, recovery, and limitation details.
+
+The canonical execution-group coordinator is server-owned. It reconstructs edge
+from fresh public books, requires an approved `RiskDecision`, atomically reserves
+both paper legs, and uses a durable `command_id` for restart/concurrency replay.
+The execution runtime/group endpoints above are observation-only; they cannot
+submit fills, trigger hedges, reset `HALTED` state, or reach a venue order API.
 
 ## Public data and Docker
 

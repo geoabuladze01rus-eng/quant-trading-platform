@@ -11,8 +11,10 @@
    reconciliation, and a risk-first portfolio UI.
 5. **Paper lifecycle hardening — in progress:** independent stateful fill events,
    residual exposure, simulated protective hedge, durable halt/recovery and
-   portfolio accounting now share the canonical engine/service/store. Remaining:
-   worker/API admission, daily equity snapshots, migration and backup tooling.
+   portfolio accounting now share the canonical engine/service/store. Server-owned
+   admission, concurrent command replay and read-only runtime observability are
+   delivered. Remaining: supervised scheduling, daily equity snapshots, migration
+   and backup tooling.
 6. **Long-running validation:** observe public feeds, add deterministic recorded
    fixtures and failure injection, measure beginner comprehension, and validate
    T-Invest sandbox reads with a separate least-privilege setup.

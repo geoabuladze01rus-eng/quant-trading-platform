@@ -67,6 +67,7 @@ class ExecutionGroup:
     execution_id: str
     execution_group_id: str
     account_id: str
+    correlation_id: str
     symbol: str
     buy_venue: Venue
     sell_venue: Venue
@@ -203,6 +204,17 @@ class ExecutionOrchestrator:
             )
             return tuple(self._group(identifier, conn) for identifier in identifiers)
 
+    def group_for_correlation(self, correlation_id: str) -> ExecutionGroup | None:
+        """Resolve a durable admission command without creating a duplicate group."""
+        with self.store.transaction() as conn:
+            for order in self.store.list_orders(self.account_id, conn=conn):
+                if (
+                    order.get("kind") == "execution_group"
+                    and order.get("correlation_id") == correlation_id
+                ):
+                    return self._group(str(order["execution_group_id"]), conn)
+        return None
+
     def reconcile_group(self, execution_group_id: str) -> GroupReconciliation:
         """Verify persisted group totals against the immutable fill-event ledger."""
         with self.store.transaction() as conn:
@@ -310,6 +322,7 @@ class ExecutionOrchestrator:
             str(order["execution_id"]),
             execution_group_id,
             self.account_id,
+            str(order["correlation_id"]),
             str(order["symbol"]),
             Venue(str(order["buy_venue"])),
             Venue(str(order["sell_venue"])),

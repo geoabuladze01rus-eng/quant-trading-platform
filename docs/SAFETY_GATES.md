@@ -61,6 +61,12 @@ uses `residual_qty = buy_filled_qty - sell_filled_qty` and enforces:
 The reset is an audited paper-runtime operation. It does not hide, delete, or
 rewrite the failed group or its residual exposure.
 
+Admission identifiers are unique per paper account in SQLite. Concurrent or
+post-restart retries attach to the same execution group and deterministic fill
+events. Read-only execution endpoints disclose runtime status, residual exposure,
+fills and reconciliation; no HTTP endpoint can submit lifecycle fills, trigger a
+hedge, or reset the circuit breaker.
+
 ## User-visible guarantees and limits
 
 Every result is marked `paper_only`, returns a stable `reason_code` and Russian

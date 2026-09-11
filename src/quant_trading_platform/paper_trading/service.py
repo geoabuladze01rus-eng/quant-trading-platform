@@ -17,6 +17,7 @@ from quant_trading_platform.explainability.reasons import (
 from quant_trading_platform.market_data.models import NormalizedOrderBook
 from quant_trading_platform.models import ArbitrageOpportunity, normalize_symbol
 from quant_trading_platform.paper_trading import PaperExecutionEngine, PaperExecutionReport
+from quant_trading_platform.paper_trading.coordinator import PaperExecutionCoordinator
 from quant_trading_platform.paper_trading.models import (
     OPEN_STATUSES,
     PaperCommand,
@@ -48,6 +49,7 @@ class PersistentPaperService:
             store,
             engine=self.engine,
         )
+        self.execution_coordinator = PaperExecutionCoordinator(self.execution_orchestrator)
 
     def _account(self, account_id: str, conn: sqlite3.Connection) -> dict[str, Any]:
         account = self.store.get_account(account_id, conn=conn)

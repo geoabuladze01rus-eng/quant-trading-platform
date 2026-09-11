@@ -77,12 +77,24 @@ remaining quantity, depth VWAP, fee, slippage, timestamp, venue, simulated order
 ID, event ID, execution ID, group ID, and status. A real venue order ID is always
 absent.
 
+`PaperExecutionCoordinator` is the only admission path into this state machine.
+It revalidates server-owned books, reconstructs current edge, checks accounting
+reconciliation and the canonical `RiskEngine`, then binds the attempt to a durable
+`command_id`. A SQLite uniqueness constraint prevents concurrent retries from
+creating two groups. Deterministic buy/sell/hedge event IDs make an interrupted
+attempt resumable. Hedge attempts are bounded; partial hedges retain
+`HEDGE_REQUIRED`, while an unavailable attempted hedge trips `HALTED`.
+
 ## Read and compatibility paths
 
 Persistent APIs expose account, balances, orders, fills, positions, performance,
 reconciliation, filtered audit, preview, create, and cancellation. GET endpoints
 do not write. The earlier in-memory `/paper/orders/simulate` contract remains for
 compatibility and is explicitly not the durable portfolio path.
+
+`GET /paper/execution-runtime`, `GET /paper/execution-groups`, and
+`GET /paper/execution-groups/{execution_group_id}` expose lifecycle state and
+reconciliation without admitting commands or mutating the ledger.
 
 Market quote snapshots and unchanged-signal deduplication remain in memory because
 they are transient feed state. Durable trading/audit state does not rely on those

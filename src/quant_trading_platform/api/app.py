@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from quant_trading_platform.audit_log import AuditLog, PersistentAuditLog
 from quant_trading_platform.config import MarketScope, Settings, TradingMode
 from quant_trading_platform.connectors.crypto import BinanceConnector, BybitConnector, OKXConnector
+from quant_trading_platform.execution_orchestrator import ExecutionGroup, ExecutionGroupStatus
 from quant_trading_platform.explainability import explain_opportunity, explain_paper_execution
 from quant_trading_platform.explainability.reasons import human_reason
 from quant_trading_platform.market_data.models import NormalizedOrderBook
@@ -455,6 +456,24 @@ def _paper_result(
     )
 
 
+def _execution_group_view(group: ExecutionGroup) -> dict[str, object]:
+    payload = asdict(group)
+    payload["fills"] = [
+        {
+            **asdict(fill),
+            "venue_order_id": None,
+            "paper_only": True,
+        }
+        for fill in group.fills
+    ]
+    payload.update(
+        paper_only=True,
+        live_trading_enabled=False,
+        live_execution=False,
+    )
+    return serialize_record(payload)
+
+
 def _paper_command_http_error(error: PaperCommandError) -> HTTPException:
     status = 404 if error.reason_code in ("account_not_found", "order_not_found") else 409
     if error.reason_code in ("invalid_order", "market_mismatch"):
@@ -570,6 +589,43 @@ def paper_performance() -> dict[str, object]:
 @app.get("/paper/reconciliation")
 def paper_reconciliation() -> dict[str, object]:
     return serialize_record(_persistent_paper_service().reconcile(settings.paper_account_id))
+
+
+@app.get("/paper/execution-runtime")
+def paper_execution_runtime() -> dict[str, object]:
+    orchestrator = _persistent_paper_service().execution_orchestrator
+    groups = orchestrator.list_groups()
+    return {
+        "status": "HALTED" if orchestrator.halted else "ACTIVE",
+        "halted": orchestrator.halted,
+        "groups_total": len(groups),
+        "hedge_required": sum(
+            group.status == ExecutionGroupStatus.HEDGE_REQUIRED for group in groups
+        ),
+        "live_trading_enabled": False,
+        "paper_only": True,
+    }
+
+
+@app.get("/paper/execution-groups")
+def paper_execution_groups() -> list[dict[str, object]]:
+    groups = _persistent_paper_service().execution_orchestrator.list_groups()
+    return [_execution_group_view(group) for group in groups]
+
+
+@app.get("/paper/execution-groups/{execution_group_id}")
+def paper_execution_group(execution_group_id: str) -> dict[str, object]:
+    orchestrator = _persistent_paper_service().execution_orchestrator
+    try:
+        group = orchestrator.group(execution_group_id)
+    except (KeyError, ValueError) as error:
+        raise HTTPException(404, "Paper execution group not found") from error
+    return {
+        **_execution_group_view(group),
+        "reconciliation": serialize_record(
+            asdict(orchestrator.reconcile_group(group.execution_group_id))
+        ),
+    }
 
 
 @app.post("/paper/orders/preview")

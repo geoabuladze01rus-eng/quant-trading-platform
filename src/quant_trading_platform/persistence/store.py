@@ -144,6 +144,10 @@ class SQLitePaperStore:
                 conn.execute(
                     f"CREATE INDEX IF NOT EXISTS {table}_correlation ON {table}(correlation_id)")
                 conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_status ON {table}(status)")
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS paper_order_correlation "
+                "ON paper_orders(account_id, correlation_id) WHERE correlation_id <> ''"
+            )
             conn.execute("""CREATE TABLE IF NOT EXISTS idempotency_records (
                 account_id TEXT NOT NULL REFERENCES paper_accounts(id), key TEXT NOT NULL,
                 request_hash TEXT NOT NULL, status TEXT NOT NULL, response TEXT,

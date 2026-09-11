@@ -10,10 +10,12 @@ import pytest_asyncio
 
 from quant_trading_platform.audit_log import AuditLog, PersistentAuditLog
 from quant_trading_platform.config import Settings
+from quant_trading_platform.execution_orchestrator import ExecutionOrchestrator
 from quant_trading_platform.market_data.models import normalize_order_book
 from quant_trading_platform.models import Venue
 from quant_trading_platform.paper_trading.service import PersistentPaperService
 from quant_trading_platform.persistence import SQLitePaperStore
+from quant_trading_platform.risk import RiskDecision
 
 api = import_module("quant_trading_platform.api.app")
 INTENT = {
@@ -64,8 +66,12 @@ async def durable_client(
     monkeypatch.setattr("quant_trading_platform.risk.time", lambda: 10)
     monkeypatch.setattr("quant_trading_platform.paper_trading.time", lambda: 10)
     monkeypatch.setattr(api.app.state, "market_data", Books(), raising=False)
+    orchestrator = ExecutionOrchestrator(store, clock_ms=lambda: 10_000)
     monkeypatch.setattr(
-        api.app.state, "paper_service", PersistentPaperService(store), raising=False
+        api.app.state,
+        "paper_service",
+        PersistentPaperService(store, orchestrator=orchestrator),
+        raising=False,
     )
     monkeypatch.setattr(
         api.app.state, "persistent_audit", PersistentAuditLog(store), raising=False
@@ -169,6 +175,45 @@ async def test_accounting_views_and_audit_filters_are_read_only(durable_client) 
     assert page["total"] == 3 and len(page["items"]) == 2
     assert all(event["order_id"] == order_id for event in page["items"])
     assert store.count_audit() == before
+
+
+@pytest.mark.asyncio
+async def test_execution_group_observability_is_read_only_and_discloses_residual(
+    durable_client,
+) -> None:
+    client, store = durable_client
+    orchestrator = api.app.state.paper_service.execution_orchestrator
+    created = orchestrator.create_group(
+        "BTC/USDT",
+        Venue.BINANCE,
+        Venue.OKX,
+        Decimal("1"),
+        risk_decision=RiskDecision(True, "Approved for paper lifecycle", ("paper_only",)),
+    )
+    orchestrator.reserve_group(created.execution_group_id, buy_expected_price=Decimal("100"))
+    orchestrator.submit_fill(
+        created.execution_group_id,
+        "buy",
+        api.app.state.market_data.books[Venue.BINANCE],
+        Decimal("100"),
+        "api-observed-fill",
+    )
+    before = (len(store.list_orders()), len(store.list_fills()), store.count_audit())
+    runtime = await client.get("/paper/execution-runtime")
+    listing = await client.get("/paper/execution-groups")
+    detail = await client.get(f"/paper/execution-groups/{created.execution_group_id}")
+    missing = await client.get("/paper/execution-groups/missing")
+    assert runtime.status_code == listing.status_code == detail.status_code == 200
+    assert runtime.json()["status"] == "ACTIVE"
+    assert runtime.json()["hedge_required"] == 1
+    assert listing.json()[0]["paper_only"] is True
+    assert listing.json()[0]["live_execution"] is False
+    assert detail.json()["status"] == "HEDGE_REQUIRED"
+    assert detail.json()["residual_qty"] == "1"
+    assert detail.json()["fills"][0]["venue_order_id"] is None
+    assert detail.json()["reconciliation"]["ok"] is True
+    assert missing.status_code == 404
+    assert (len(store.list_orders()), len(store.list_fills()), store.count_audit()) == before
 
 
 @pytest.mark.asyncio
