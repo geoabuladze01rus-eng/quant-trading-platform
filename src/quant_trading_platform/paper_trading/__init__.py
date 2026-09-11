@@ -46,6 +46,19 @@ class PaperFill:
 
 
 @dataclass(frozen=True)
+class DepthFill:
+    """Single-leg depth result used by the canonical execution lifecycle."""
+
+    requested_qty: Decimal
+    filled_qty: Decimal
+    remaining_qty: Decimal
+    average_fill_price: Decimal
+    fee: Decimal
+    slippage: Decimal
+    status: str
+
+
+@dataclass(frozen=True)
 class PaperPosition:
     """Flat hypothetical paired trade; this is not a funded account cash ledger."""
 
@@ -315,6 +328,63 @@ class PaperExecutionEngine:
         self._positions.append(PaperPosition(execution_id, opportunity.symbol, Decimal(0), pnl))
         return finish(
             "paper_filled", "Both spread legs simulated after risk and depth checks", orders, fills
+        )
+
+    def simulate_depth_fill(
+        self,
+        order_book: NormalizedOrderBook,
+        *,
+        side: str,
+        quantity: Decimal,
+        expected_price: Decimal,
+        fee_rate_pct: Decimal = Decimal("0.1"),
+    ) -> DepthFill:
+        """Consume one normalized book side without ever contacting a venue.
+
+        Unlike :meth:`simulate`, this method deliberately returns partial and
+        zero fills. The orchestrator owns lifecycle state, idempotency, balance
+        accounting and protective hedging around these deterministic results.
+        """
+        if side not in ("buy", "sell"):
+            raise ValueError("Paper order side must be buy or sell")
+        for name, value in (
+            ("quantity", quantity),
+            ("expected_price", expected_price),
+            ("fee_rate_pct", fee_rate_pct),
+        ):
+            if not value.is_finite() or value < 0 or (name != "fee_rate_pct" and value == 0):
+                raise ValueError(f"{name} must be finite and positive")
+        levels = order_book.asks if side == "buy" else order_book.bids
+        remaining = quantity
+        notional = Decimal(0)
+        for level in levels:
+            taken = min(remaining, level.quantity)
+            notional += taken * level.price
+            remaining -= taken
+            if remaining == 0:
+                break
+        filled = quantity - remaining
+        if filled == 0:
+            return DepthFill(
+                quantity,
+                Decimal(0),
+                quantity,
+                Decimal(0),
+                Decimal(0),
+                Decimal(0),
+                "unfilled",
+            )
+        average = notional / filled
+        direction = Decimal(1) if side == "buy" else Decimal(-1)
+        slippage = direction * (average - expected_price) / expected_price * 100
+        return DepthFill(
+            quantity,
+            filled,
+            remaining,
+            average,
+            notional * fee_rate_pct / 100,
+            slippage,
+            "filled" if remaining == 0 else "partially_filled",
         )
 
 

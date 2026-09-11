@@ -7,8 +7,8 @@ balances, strategies, or routing.
 
 There is one canonical Python package, `src/quant_trading_platform`, and one depth
 simulator, `PaperExecutionEngine`. The durable `PersistentPaperService` composes
-that engine with `SQLitePaperStore`; it does not introduce exchange execution or
-import connector order methods.
+that engine and the canonical `ExecutionOrchestrator` with `SQLitePaperStore`; it
+does not introduce exchange execution or import connector order methods.
 
 ## Durable paper command
 
@@ -47,6 +47,35 @@ The database transaction is the invariant boundary: balances cannot go negative;
 fills, balance changes, positions, audit, and the stored response commit together.
 Failures roll the complete command back. A same-key replay reads its stored
 response; a conflicting payload is rejected.
+
+## Stateful execution groups
+
+The next paper lifecycle uses the same engine, store, balances, fills, positions,
+and audit tables. It does not create a second execution ledger. One
+`execution_group_id` binds independent buy, sell, and protective-hedge events.
+Each event has a stable `event_id`; the fill primary key makes replays idempotent
+across process restarts.
+
+```text
+normalized public order book
+  → PaperExecutionEngine.simulate_depth_fill
+  → ExecutionOrchestrator.submit_fill
+  → SQLite transaction: balance + position + fill event + group state + audit
+  → residual_qty = buy_filled_qty - sell_filled_qty
+       zero and terminal → COMPLETED
+       non-zero          → HEDGE_REQUIRED
+  → protective hedge consumes only abs(residual_qty)
+       full              → reconcile → COMPLETED
+       partial           → new residual → HEDGE_REQUIRED
+       failed            → HALTED global circuit breaker
+```
+
+`COMPLETED` with a non-zero residual is forbidden. `HALTED` survives restart and
+blocks new groups until an explicit operator recovery/reset. Reset does not edit
+or erase the halted group's history. Fill results disclose requested, filled and
+remaining quantity, depth VWAP, fee, slippage, timestamp, venue, simulated order
+ID, event ID, execution ID, group ID, and status. A real venue order ID is always
+absent.
 
 ## Read and compatibility paths
 

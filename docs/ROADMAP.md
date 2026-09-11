@@ -9,10 +9,10 @@
    balances, reservations, lifecycle, partial fills, positions, P&L/cost totals,
    restart recovery, exact-once command idempotency, structured persistent audit,
    reconciliation, and a risk-first portfolio UI.
-5. **Paper lifecycle hardening — next:** model independent leg latency and stateful
-   multi-event partial fills; residual exposure, simulated protective hedge,
-   halt/recovery, daily equity snapshots, and migration/backup tooling. Extend the
-   canonical engine/service instead of creating a parallel execution architecture.
+5. **Paper lifecycle hardening — in progress:** independent stateful fill events,
+   residual exposure, simulated protective hedge, durable halt/recovery and
+   portfolio accounting now share the canonical engine/service/store. Remaining:
+   worker/API admission, daily equity snapshots, migration and backup tooling.
 6. **Long-running validation:** observe public feeds, add deterministic recorded
    fixtures and failure injection, measure beginner comprehension, and validate
    T-Invest sandbox reads with a separate least-privilege setup.

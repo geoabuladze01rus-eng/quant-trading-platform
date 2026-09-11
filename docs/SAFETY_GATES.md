@@ -39,6 +39,26 @@ reservations, fills, balances, positions, audit, reconciliation snapshot, and th
 idempotent response. Any write failure rolls everything back. Reconciliation
 independently rebuilds balances and reservations and reports structured issues.
 
+## Execution-group circuit breaker
+
+Stateful paper fills remain local and use only normalized public order books.
+Group creation requires an approved canonical `RiskDecision`; a bare Boolean or
+client-provided approval is not accepted. Every fill event is persisted exactly
+once by `event_id`. Group reconciliation
+uses `residual_qty = buy_filled_qty - sell_filled_qty` and enforces:
+
+- a non-zero residual always means `HEDGE_REQUIRED`;
+- `COMPLETED` is impossible while residual exposure is non-zero;
+- a protective hedge may request only the absolute current residual;
+- a partial hedge is reconciled again against the new residual;
+- unavailable/failed hedge execution moves the group and runtime to `HALTED`;
+- `HALTED` blocks new execution groups across restart until an explicit reset;
+- BUY debits virtual quote only when sufficient; SELL debits virtual base only
+  when sufficient; neither path can create a negative balance.
+
+The reset is an audited paper-runtime operation. It does not hide, delete, or
+rewrite the failed group or its residual exposure.
+
 ## User-visible guarantees and limits
 
 Every result is marked `paper_only`, returns a stable `reason_code` and Russian

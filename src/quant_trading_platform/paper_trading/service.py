@@ -9,6 +9,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from quant_trading_platform.config import Settings
+from quant_trading_platform.execution_orchestrator import ExecutionOrchestrator
 from quant_trading_platform.explainability.reasons import (
     canonical_reason_code,
     human_reason,
@@ -35,9 +36,18 @@ class PersistentPaperService:
     cancellation. No background replenishment or real-exchange atomicity is implied.
     """
 
-    def __init__(self, store: SQLitePaperStore, engine: PaperExecutionEngine | None = None) -> None:
+    def __init__(
+        self,
+        store: SQLitePaperStore,
+        engine: PaperExecutionEngine | None = None,
+        orchestrator: ExecutionOrchestrator | None = None,
+    ) -> None:
         self.store = store
         self.engine = engine or PaperExecutionEngine()
+        self.execution_orchestrator = orchestrator or ExecutionOrchestrator(
+            store,
+            engine=self.engine,
+        )
 
     def _account(self, account_id: str, conn: sqlite3.Connection) -> dict[str, Any]:
         account = self.store.get_account(account_id, conn=conn)

@@ -89,6 +89,36 @@ def reconcile_records(
             issue("closed_order_reservation", "Закрытый ордер удерживает резерв", order_id)
         bought = fill_quantities[(order_id, "buy")]
         sold = fill_quantities[(order_id, "sell")]
+        if order.get("kind") == "execution_group":
+            residual = bought - sold
+            stored_residual = number(order.get("residual_qty", "0"), order_id)
+            stored_buy = number(order.get("buy_filled_qty", "0"), order_id)
+            stored_sell = number(order.get("sell_filled_qty", "0"), order_id)
+            if stored_buy != bought or stored_sell != sold or stored_residual != residual:
+                issue(
+                    "execution_group_mismatch",
+                    "Итоги группы исполнения расходятся с журналом исполнений",
+                    order_id,
+                )
+            if order["status"] == "COMPLETED" and residual != 0:
+                issue(
+                    "completed_with_residual",
+                    "Завершённая группа содержит остаточный риск",
+                    order_id,
+                )
+            if order["status"] == "HEDGE_REQUIRED" and residual == 0:
+                issue(
+                    "execution_status_mismatch",
+                    "Группа требует хеджирования без остаточного риска",
+                    order_id,
+                )
+            if min(bought, sold) != number(order.get("filled_quantity", "0"), order_id):
+                issue(
+                    "order_fill_mismatch",
+                    "Согласованный объём группы расходится с исполнениями",
+                    order_id,
+                )
+            continue
         if order["status"] in ("accepted", "partially_filled", "filled") and not bought:
             issue("order_without_fills", "Принятый ордер не содержит исполнений", order_id)
         if bought != sold:
@@ -137,7 +167,11 @@ def reconcile_records(
         issue("fees_total_mismatch", "Сумма комиссий расходится с исполнениями")
     if "slippage_paid_usd" in account and number(account["slippage_paid_usd"]) != slippage:
         issue("slippage_total_mismatch", "Резерв проскальзывания расходится с исполнениями")
-    if initial and "realized_pnl_usd" in account:
+    has_open_execution_exposure = any(
+        order.get("kind") == "execution_group" and order.get("status") != "COMPLETED"
+        for order in orders
+    )
+    if initial and "realized_pnl_usd" in account and not has_open_execution_exposure:
         pnl = expected["USDT"] - number(initial.get("USDT", "0"))
         if number(account["realized_pnl_usd"]) != pnl:
             issue("realized_pnl_mismatch", "Реализованный результат расходится с денежным потоком")
