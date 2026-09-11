@@ -40,13 +40,14 @@ def runner(tmp_path) -> ExecutionOrchestrator:
 
 
 def group(runner: ExecutionOrchestrator):
-    return runner.create_group(
+    created = runner.create_group(
         "BTC/USDT",
         Venue.BINANCE,
         Venue.BYBIT,
         Decimal("100"),
         risk_decision=APPROVED,
     )
+    return runner.reserve_group(created.execution_group_id, buy_expected_price=Decimal("10"))
 
 
 def test_group_creation_requires_approved_canonical_risk_decision(
@@ -62,6 +63,34 @@ def test_group_creation_requires_approved_canonical_risk_decision(
             risk_decision=rejected,
         )
     assert runner.store.list_orders() == []
+
+
+def test_both_legs_are_reserved_atomically_before_any_fill(
+    runner: ExecutionOrchestrator,
+) -> None:
+    created = runner.create_group(
+        "BTC/USDT",
+        Venue.BINANCE,
+        Venue.BYBIT,
+        Decimal("100"),
+        risk_decision=APPROVED,
+    )
+    with pytest.raises(ValueError, match="must be reserved"):
+        runner.submit_fill(
+            created.execution_group_id,
+            "buy",
+            book(Venue.BINANCE),
+            Decimal("10"),
+            "unreserved-fill",
+        )
+    reserved = runner.reserve_group(
+        created.execution_group_id, buy_expected_price=Decimal("10")
+    )
+    assert reserved.reserved_quote == Decimal("1001.000")
+    assert reserved.reserved_base == 100
+    balances = {row["asset"]: row for row in runner.store.list_balances("paper-default")}
+    assert Decimal(balances["USDT"]["reserved"]) == Decimal("1001.000")
+    assert Decimal(balances["BTC"]["reserved"]) == 100
 
 
 def test_100_100_fill_completes_with_required_fill_contract(
@@ -85,6 +114,11 @@ def test_100_100_fill_completes_with_required_fill_contract(
     completed = runner.group(execution.execution_group_id)
     assert completed.status == ExecutionGroupStatus.COMPLETED
     assert completed.residual_qty == 0
+    assert completed.reservations_active is False
+    assert all(
+        Decimal(balance["reserved"]) == 0
+        for balance in runner.store.list_balances("paper-default")
+    )
     assert buy.execution_group_id == sell.execution_group_id == completed.execution_group_id
     assert buy.venue_order_id is None
     assert buy.simulated_order_id
@@ -312,18 +346,15 @@ def test_negative_balance_is_prevented(tmp_path, usdt: str, btc: str, side: str)
         Decimal("1"),
         risk_decision=APPROVED,
     )
-    venue = Venue.BINANCE if side == "buy" else Venue.BYBIT
+    before = store.list_balances("paper-default")
     balance_kind = "base" if side == "sell" else "quote"
     with pytest.raises(ValueError, match=f"{balance_kind} balance"):
-        runner.submit_fill(
+        runner.reserve_group(
             execution.execution_group_id,
-            side,
-            book(venue),
-            Decimal("10" if side == "buy" else "11"),
-            f"no-{side}-funds",
+            buy_expected_price=Decimal("10"),
         )
     assert store.list_fills() == []
-    assert all(Decimal(row["available"]) >= 0 for row in store.list_balances("paper-default"))
+    assert store.list_balances("paper-default") == before
 
 
 def test_completed_with_residual_is_a_hard_invariant(runner: ExecutionOrchestrator) -> None:
@@ -349,6 +380,9 @@ def test_depth_vwap_fee_slippage_and_accounting_reconcile(
         Venue.BYBIT,
         Decimal("2"),
         risk_decision=APPROVED,
+    )
+    execution = runner.reserve_group(
+        execution.execution_group_id, buy_expected_price=Decimal("10")
     )
     buy_book = normalize_order_book(
         Venue.BINANCE,

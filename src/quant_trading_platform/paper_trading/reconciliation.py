@@ -82,7 +82,13 @@ def reconcile_records(
         base = str(order["symbol"]).split("/")[0]
         quote_reserve = number(order.get("reserved_quote", "0"), order_id)
         base_reserve = number(order.get("reserved_base", "0"), order_id)
-        if order["status"] in OPEN_STATUSES:
+        lifecycle_open = order.get("kind") == "execution_group" and order["status"] in {
+            "OPEN",
+            "PARTIAL",
+            "HEDGE_REQUIRED",
+            "HALTED",
+        }
+        if order["status"] in OPEN_STATUSES or lifecycle_open:
             reserved["USDT"] += quote_reserve
             reserved[base] += base_reserve
         elif quote_reserve or base_reserve:

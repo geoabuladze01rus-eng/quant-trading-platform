@@ -48,6 +48,8 @@ once by `event_id`. Group reconciliation
 uses `residual_qty = buy_filled_qty - sell_filled_qty` and enforces:
 
 - a non-zero residual always means `HEDGE_REQUIRED`;
+- quote and base requirements for both legs are reserved atomically before the
+  first fill event; an unreserved group cannot execute;
 - `COMPLETED` is impossible while residual exposure is non-zero;
 - a protective hedge may request only the absolute current residual;
 - a partial hedge is reconciled again against the new residual;

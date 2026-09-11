@@ -77,6 +77,9 @@ class ExecutionGroup:
     status: ExecutionGroupStatus
     fills: tuple[FillResult, ...]
     hedge_attempted: bool
+    reserved_quote: Decimal
+    reserved_base: Decimal
+    reservations_active: bool
 
 
 @dataclass(frozen=True)
@@ -230,6 +233,61 @@ class ExecutionOrchestrator:
                 tuple(issues),
             )
 
+    def reserve_group(
+        self, execution_group_id: str, *, buy_expected_price: Decimal
+    ) -> ExecutionGroup:
+        """Atomically reserve maximum quote and base requirements for both legs."""
+        if not buy_expected_price.is_finite() or buy_expected_price <= 0:
+            raise ValueError("buy_expected_price must be finite and positive")
+        with self.store.transaction() as conn:
+            group = self._group(execution_group_id, conn)
+            if group.status != ExecutionGroupStatus.OPEN or group.fills:
+                raise ValueError("Only an unfilled OPEN group can be reserved")
+            if group.reservations_active:
+                return group
+            base, quote = group.symbol.split("/")
+            base_row = self.store.get_balance(self.account_id, base, conn=conn)
+            quote_row = self.store.get_balance(self.account_id, quote, conn=conn)
+            if base_row is None or quote_row is None:
+                raise ValueError("Paper balance row is missing")
+            quote_required = (
+                group.requested_qty
+                * buy_expected_price
+                * (Decimal(1) + self.fee_rate_pct / 100)
+            )
+            base_required = group.requested_qty
+            quote_available = Decimal(str(quote_row["available"]))
+            base_available = Decimal(str(base_row["available"]))
+            if quote_available < quote_required:
+                raise ValueError("Insufficient paper quote balance for group reservation")
+            if base_available < base_required:
+                raise ValueError("Insufficient paper base balance for group reservation")
+            self.store.upsert_balance(
+                self.account_id,
+                quote,
+                quote_available - quote_required,
+                Decimal(str(quote_row["reserved"])) + quote_required,
+                conn=conn,
+            )
+            self.store.upsert_balance(
+                self.account_id,
+                base,
+                base_available - base_required,
+                Decimal(str(base_row["reserved"])) + base_required,
+                conn=conn,
+            )
+            order = self.store.get_order(execution_group_id, conn=conn)
+            assert order is not None
+            order.update(
+                reserved_quote=quote_required,
+                reserved_base=base_required,
+                reservations_active=True,
+                buy_expected_price=buy_expected_price,
+            )
+            self.store.update_order(order, conn=conn)
+            self._audit(order, "approved", "group_balance_reserved", conn)
+        return self.group(execution_group_id)
+
     def _group(self, execution_group_id: str, conn: Any) -> ExecutionGroup:
         order = self.store.get_order(execution_group_id, conn=conn)
         if (
@@ -262,6 +320,9 @@ class ExecutionOrchestrator:
             ExecutionGroupStatus(str(order["status"])),
             fills,
             bool(order.get("hedge_attempted", False)),
+            Decimal(str(order.get("reserved_quote", "0"))),
+            Decimal(str(order.get("reserved_base", "0"))),
+            bool(order.get("reservations_active", False)),
         )
 
     def submit_fill(
@@ -308,6 +369,8 @@ class ExecutionOrchestrator:
         group = self._group(execution_group_id, conn)
         if group.status in (ExecutionGroupStatus.COMPLETED, ExecutionGroupStatus.HALTED):
             raise ExecutionHaltedError(f"Execution group is {group.status.value}")
+        if not group.reservations_active:
+            raise ValueError("Execution group balances must be reserved before fills")
         if side not in ("buy", "sell"):
             raise ValueError("Paper fill side must be buy or sell")
         self._validate_book(group, side, order_book, is_hedge=is_hedge)
@@ -438,6 +501,7 @@ class ExecutionOrchestrator:
                 human_reason=human_reason("paper_order_filled"),
             )
             self.store.update_order(order, conn=conn)
+            self._release_group_reservations(order, conn)
             self._book_completed_group(order, conn)
             self._audit(order, "approved", "paper_order_filled", conn)
         return self.group(execution_group_id)
@@ -524,31 +588,44 @@ class ExecutionOrchestrator:
             raise ValueError("Paper balance row is missing")
         base_available = Decimal(str(base_row["available"]))
         quote_available = Decimal(str(quote_row["available"]))
+        quote_reserved = Decimal(str(quote_row["reserved"]))
+        base_reserved = Decimal(str(base_row["reserved"]))
+        order = self.store.get_order(group.execution_group_id, conn=conn)
+        assert order is not None
         if side == "buy":
             debit = notional + fee
-            if quote_available < debit:
+            reserved_used = min(group.reserved_quote, debit)
+            extra_debit = debit - reserved_used
+            if quote_available < extra_debit or quote_reserved < reserved_used:
                 raise ValueError("Insufficient paper quote balance")
-            quote_available -= debit
+            quote_available -= extra_debit
+            quote_reserved -= reserved_used
             base_available += quantity
+            order["reserved_quote"] = group.reserved_quote - reserved_used
         else:
-            if base_available < quantity:
+            reserved_used = min(group.reserved_base, quantity)
+            extra_debit = quantity - reserved_used
+            if base_available < extra_debit or base_reserved < reserved_used:
                 raise ValueError("Insufficient paper base balance")
-            base_available -= quantity
+            base_available -= extra_debit
+            base_reserved -= reserved_used
             quote_available += notional - fee
+            order["reserved_base"] = group.reserved_base - reserved_used
         self.store.upsert_balance(
             self.account_id,
             quote,
             quote_available,
-            Decimal(str(quote_row["reserved"])),
+            quote_reserved,
             conn=conn,
         )
         self.store.upsert_balance(
             self.account_id,
             base,
             base_available,
-            Decimal(str(base_row["reserved"])),
+            base_reserved,
             conn=conn,
         )
+        self.store.update_order(order, conn=conn)
         position = self.store.get_position(f"{self.account_id}:{base}", conn=conn)
         self.store.upsert_position(
             {
@@ -559,8 +636,8 @@ class ExecutionOrchestrator:
                 "correlation_id": group.execution_group_id,
                 "asset": base,
                 "symbol": group.symbol,
-                "quantity": base_available + Decimal(str(base_row["reserved"])),
-                "status": "open" if base_available else "flat",
+                "quantity": base_available + base_reserved,
+                "status": "open" if base_available + base_reserved else "flat",
             },
             conn=conn,
         )
@@ -616,6 +693,7 @@ class ExecutionOrchestrator:
         )
         self.store.update_order(order, conn=conn)
         if status == ExecutionGroupStatus.COMPLETED and group.status != status:
+            self._release_group_reservations(order, conn)
             self._book_completed_group(order, conn)
         event = (
             "stop"
@@ -627,6 +705,30 @@ class ExecutionOrchestrator:
             else "signal"
         )
         self._audit(order, event, reason, conn)
+
+    def _release_group_reservations(self, order: dict[str, Any], conn: Any) -> None:
+        if not order.get("reservations_active"):
+            return
+        base, quote = str(order["symbol"]).split("/")
+        quote_release = Decimal(str(order.get("reserved_quote", "0")))
+        base_release = Decimal(str(order.get("reserved_base", "0")))
+        for asset, amount in ((quote, quote_release), (base, base_release)):
+            balance = self.store.get_balance(self.account_id, asset, conn=conn)
+            if balance is None or Decimal(str(balance["reserved"])) < amount:
+                raise ValueError("Group reservation does not match paper balance")
+            self.store.upsert_balance(
+                self.account_id,
+                asset,
+                Decimal(str(balance["available"])) + amount,
+                Decimal(str(balance["reserved"])) - amount,
+                conn=conn,
+            )
+        order.update(
+            reserved_quote=Decimal(0),
+            reserved_base=Decimal(0),
+            reservations_active=False,
+        )
+        self.store.update_order(order, conn=conn)
 
     def _book_completed_group(self, order: dict[str, Any], conn: Any) -> None:
         if order.get("pnl_booked"):
