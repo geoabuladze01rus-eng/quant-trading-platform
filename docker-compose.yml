@@ -9,4 +9,10 @@ services:
       LIVE_TRADING_ENABLED: "false"
       LIVE_ORDER_ACCEPTANCE_GATE: "false"
       T_INVEST_SANDBOX: "true"
+      PAPER_DATABASE_PATH: /app/data/paper_alpha.sqlite3
+    volumes:
+      - paper-data:/app/data
     restart: unless-stopped
+
+volumes:
+  paper-data:

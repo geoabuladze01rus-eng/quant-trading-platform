@@ -2,9 +2,17 @@
 
 from collections.abc import Mapping
 
+from quant_trading_platform.explainability.reasons import human_reason
 from quant_trading_platform.models import ArbitrageOpportunity
 from quant_trading_platform.paper_trading import PaperExecutionReport
 from quant_trading_platform.risk import RiskDecision, reason_code_for
+
+
+def explain_advanced_decision(event: Mapping[str, object]) -> dict[str, object]:
+    """Structured audit explanation with the stable Russian reason catalog."""
+    from quant_trading_platform.audit_log.persistent import advanced_decision
+
+    return advanced_decision(event)
 
 
 def explain_risk_decision(decision: RiskDecision) -> dict[str, object]:
@@ -13,6 +21,7 @@ def explain_risk_decision(decision: RiskDecision) -> dict[str, object]:
         "approved": decision.approved,
         "reason_code": decision.reason_code,
         "reason_text": decision.reason_text,
+        "human_reason": human_reason(decision.reason_code),
         "risk_score": "passed" if decision.approved else "blocked",
         "risk_score_definition": "Deterministic gate status; not a probability of loss or profit.",
         "checks": list(decision.checks),

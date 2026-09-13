@@ -16,6 +16,11 @@ merge into `main` without explicit authorization.
   regression tests. Never remove or weaken existing tests to make checks pass.
 - Keep GET endpoints read-only and the dashboard risk-first. Do not add real
   buy/sell buttons or hide rejection reasons behind profit-focused messaging.
+- Keep persistent paper writes atomic across balances, orders, fills, positions,
+  audit, reconciliation snapshots, and idempotency responses. Financial values
+  must use `Decimal`; do not persist floats.
+- Preserve stable paper reason codes and Russian `human_reason` text. New paper
+  command endpoints require durable idempotency and must remain under `/paper/`.
 
 ## Product principles
 

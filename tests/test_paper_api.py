@@ -199,9 +199,17 @@ async def test_post_browser_origins_and_only_paper_route(client: httpx.AsyncClie
     })
     assert preflight.status_code == 200
     schema = (await client.get("/openapi.json")).json()
-    assert [p for p, methods in schema["paths"].items() if "post" in methods] == [
+    assert {p for p, methods in schema["paths"].items() if "post" in methods} == {
         "/paper/orders/simulate",
-    ]
+        "/paper/orders/preview",
+        "/paper/orders",
+        "/paper/orders/{order_id}/cancel",
+    }
+    assert all(
+        path.startswith("/paper/")
+        for path, methods in schema["paths"].items()
+        if "post" in methods
+    )
 
 
 @pytest.mark.asyncio

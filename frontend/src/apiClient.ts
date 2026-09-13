@@ -194,12 +194,12 @@ export function getRisk(): Promise<Risk> {
   });
 }
 export function getAudit(): Promise<AuditEvent[]> {
-  return request('/audit', mockAudit, (value) => list(value, (item) => {
+  return request('/audit', mockAudit, (value) => list(Array.isArray(value) ? value : record(value).items, (item) => {
     const v = record(item);
     return {
-      id: string(v.id), timestamp: string(v.timestamp), market_scope: string(v.market_scope),
-      event: string(v.event), strategy: string(v.strategy), reason: string(v.reason),
-      who: v.who === undefined ? undefined : string(v.who),
+      id: string(v.id ?? v.event_id), timestamp: string(v.timestamp), market_scope: string(v.market_scope ?? v.market_type),
+      event: string(v.event ?? v.event_type), strategy: string(v.strategy), reason: string(v.reason ?? v.human_reason),
+      who: v.who === undefined && v.actor === undefined ? undefined : string(v.who ?? v.actor),
       opportunity_id: v.opportunity_id === undefined ? undefined : string(v.opportunity_id),
       decision: v.decision === undefined ? undefined : string(v.decision),
       execution_id: v.execution_id === undefined ? undefined : string(v.execution_id),

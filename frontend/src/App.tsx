@@ -1,9 +1,9 @@
-import { Activity, AlertTriangle, BarChart3, DatabaseZap, FileText, Gauge, Lock, Settings, ShieldCheck } from 'lucide-react';
+import { Activity, AlertTriangle, BarChart3, DatabaseZap, FileText, Gauge, Lock, Settings, ShieldCheck, WalletCards } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { getAudit, getOpportunities, getRisk, getSettings, getVenues, isMockMode } from './apiClient';
 import type { AuditEvent, DashboardSettings, OpportunityResponse, Risk, Venue } from './types';
-import { PaperExecution } from './PaperExecution';
+import { PaperAlpha as PaperExecution } from './PaperAlpha';
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const pct = (value: number) => `${value.toFixed(2)}%`;
@@ -98,6 +98,7 @@ export function App() {
         <nav className="nav-list" aria-label="Main navigation">
           <a className="nav-item active" href="#command"><Gauge size={18} /> Command center</a>
           <a className="nav-item" href="#opportunities"><BarChart3 size={18} /> Opportunities</a>
+          <a className="nav-item" href="#paper"><WalletCards size={18} /> Paper portfolio</a>
           <a className="nav-item" href="#risk"><ShieldCheck size={18} /> Risk center</a>
           <a className="nav-item" href="#audit"><FileText size={18} /> Audit log</a>
           <a className="nav-item" href="#settings"><Settings size={18} /> Settings</a>
