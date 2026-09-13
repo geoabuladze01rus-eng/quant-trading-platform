@@ -7,6 +7,7 @@ import pytest
 from quant_trading_platform.config import Settings
 from quant_trading_platform.market_data.models import normalize_order_book
 from quant_trading_platform.models import ArbitrageOpportunity, Venue
+from quant_trading_platform.paper_trading.models import PaperCommandError
 from quant_trading_platform.paper_trading.service import PersistentPaperService
 from quant_trading_platform.persistence.store import SQLitePaperStore
 
@@ -55,6 +56,9 @@ def test_funded_execution_reconciles_fills_fees_reserve_and_equity(tmp_path):
     assert result["account"]["fees_paid_usd"] == "0.202"
     assert result["account"]["slippage_paid_usd"] == "0.05"
     assert result["account"]["equity_usd"] == "11001.748"
+    assert result["account"]["unrealized_pnl_usd"] is None
+    assert result["account"]["unpriced_pnl_assets"] == ["BTC"]
+    assert result["account"]["mark_sources"]["BTC"] == "last_validated_paper_buy_fill"
     assert instance.reconcile()["issues"] == []
     assert len(instance.store.list_audit()) == 3
 
@@ -136,6 +140,22 @@ def test_audit_failure_rolls_back_fills_balances_and_idempotency(tmp_path, monke
     assert instance.account() == before
     assert instance.store.list_fills() == instance.store.list_orders() == []
     assert instance.store.get_idempotency("paper-default", "first") is None
+
+
+def test_recovery_halts_and_blocks_new_commands_after_detected_corruption(tmp_path):
+    path = tmp_path / "paper.db"
+    instance = service(path)
+    execute(instance)
+    instance.store.upsert_balance("paper-default", "USDT", Decimal(9999), Decimal(0))
+    restarted = PersistentPaperService(SQLitePaperStore(path))
+    recovery = restarted.recover()
+    assert recovery["status"] == "error"
+    assert recovery["account_status"] == "halted"
+    assert restarted.account()["recovery_reason"] == "reconciliation_mismatch"
+    with pytest.raises(PaperCommandError) as error:
+        execute(restarted, key="blocked-after-recovery")
+    assert error.value.reason_code == "reconciliation_mismatch"
+    assert len(restarted.store.list_orders()) == 1
 
 
 def test_unpriced_holdings_are_disclosed_without_fabricated_equity(tmp_path):
