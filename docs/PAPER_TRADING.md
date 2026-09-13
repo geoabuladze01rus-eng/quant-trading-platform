@@ -44,7 +44,10 @@ the key under `BEGIN IMMEDIATE`; order state, audit, and the original response a
 committed together. The same payload returns that response after process restart.
 Another payload with the same key returns `duplicate_idempotency_key` and creates
 nothing. Concurrent distinct commands serialize at the database boundary and
-cannot overspend.
+cannot overspend. On every application startup, a persistent reconciliation snapshot
+is created. If it detects a mismatch, the account becomes `halted` and new paper
+orders are blocked until the ledger is repaired and a clean restart passes reconciliation.
+Cancellation remains available to release an existing reservation.
 
 The default database is `data/paper_alpha.sqlite3`. For backup, stop the application
 and copy the SQLite database plus any WAL files as one consistent set, or use
@@ -78,10 +81,12 @@ simulation. It does not mutate the persistent virtual portfolio.
 
 ## Alpha limitations
 
-Initial non-USDT holdings have no mark until a validated paper fill supplies one;
-virtual equity and unrealized P&L are then returned as `null`, while priced equity
-and `unpriced_assets` disclose what is known. Reported performance is hypothetical,
-not independently verified and never a promise of profit.
+Initial non-USDT holdings have no mark until a validated paper fill supplies one.
+A fill may establish a valuation mark, but it never invents a cost basis for
+pre-funded inventory. Therefore unrealized P&L remains `null` while
+`unpriced_pnl_assets` identifies the assets whose historical cost is unknown.
+Reported performance is hypothetical, not independently verified and never a promise
+of profit.
 
 The next milestone is stateful multi-event fills, independent leg failure/residual
 exposure, simulated protective hedging and halt/recovery within the same canonical
