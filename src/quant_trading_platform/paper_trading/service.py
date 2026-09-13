@@ -221,6 +221,11 @@ class PersistentPaperService:
             replay = self._replay(account_id, idempotency_key, command.payload(), conn)
             if replay is not None:
                 return replay
+            if account.get("status") != "active":
+                raise PaperCommandError(
+                    "reconciliation_mismatch",
+                    "Счёт остановлен: сначала устраните расхождение по сверке.",
+                )
             order_id = str(uuid4())
             order: dict[str, Any] = {
                 "order_id": order_id,
@@ -262,8 +267,6 @@ class PersistentPaperService:
             rejection = funding_error if report.fills else canonical_reason_code(report.reason_code)
             if command.symbol not in ("BTC/USDT", "ETH/USDT"):
                 rejection = "unsupported_market"
-            if account.get("status") != "active":
-                rejection = "risk_limit_exceeded"
             if rejection:
                 order.update(
                     status="rejected",
@@ -348,12 +351,14 @@ class PersistentPaperService:
                     + sold.fee_usd,
                     slippage_paid_usd=Decimal(account.get("slippage_paid_usd", "0")) + reserve_cost,
                 )
+                # A validated paper fill may provide a mark, but never invents a
+                # cost basis for pre-funded inventory. Unknown P&L stays explicit.
                 marks = dict(account.get("marks", {}))
+                mark_sources = dict(account.get("mark_sources", {}))
                 marks[base] = decimal_text(bought.price)
+                mark_sources[base] = "last_validated_paper_buy_fill"
                 account["marks"] = marks
-                basis = dict(account.get("cost_basis", {}))
-                basis.setdefault(base, decimal_text(bought.price))
-                account["cost_basis"] = basis
+                account["mark_sources"] = mark_sources
                 self.store.upsert_account(account_id, account, conn=conn)
                 self._positions(account_id, account, conn)
                 self._audit(order, actor, "paper_order_" + order["status"], conn)
@@ -529,7 +534,8 @@ class PersistentPaperService:
         account = self._account(account_id, conn)
         balances = self.store.list_balances(account_id, conn=conn)
         known_equity, unrealized = Decimal(0), Decimal(0)
-        unpriced = []
+        unpriced: list[str] = []
+        unknown_cost_basis: list[str] = []
         for balance in balances:
             total = Decimal(balance["available"]) + Decimal(balance["reserved"])
             balance["total"] = decimal_text(total)
@@ -541,7 +547,10 @@ class PersistentPaperService:
                 continue
             known_equity += total * Decimal(mark)
             basis = account.get("cost_basis", {}).get(asset)
-            if basis is not None:
+            if basis is None:
+                if total and asset != "USDT":
+                    unknown_cost_basis.append(asset)
+            else:
                 unrealized += total * (Decimal(mark) - Decimal(basis))
         return cast(
             dict[str, Any],
@@ -554,8 +563,10 @@ class PersistentPaperService:
                     "virtual_equity_usdt": None if unpriced else known_equity,
                     "priced_equity_usd": known_equity,
                     "unpriced_assets": unpriced,
-                    "unrealized_pnl_usd": None if unpriced else unrealized,
-                    "unrealized_pnl_usdt": None if unpriced else unrealized,
+                    "unpriced_pnl_assets": unknown_cost_basis,
+                    "mark_sources": account.get("mark_sources", {}),
+                    "unrealized_pnl_usd": None if unpriced or unknown_cost_basis else unrealized,
+                    "unrealized_pnl_usdt": None if unpriced or unknown_cost_basis else unrealized,
                     "realized_pnl_usd": account.get("realized_pnl_usd", "0"),
                     "realized_pnl_usdt": account.get("realized_pnl_usd", "0"),
                     "fees_paid_usd": account.get("fees_paid_usd", "0"),
@@ -565,6 +576,36 @@ class PersistentPaperService:
                 }
             ),
         )
+
+    def recover(self, account_id: str = "paper-default") -> dict[str, Any]:
+        """Persist a startup reconciliation snapshot and halt unsafe paper commands."""
+        with self.store.transaction() as conn:
+            account = self._account(account_id, conn)
+            result = reconcile_records(
+                account,
+                self.store.list_balances(account_id, conn=conn),
+                self.store.list_orders(account_id, conn=conn),
+                self.store.list_fills(account_id, conn=conn),
+                self.store.list_positions(account_id, conn=conn),
+            )
+            recovered = result["status"] == "ok"
+            account.update(
+                status="active" if recovered else "halted",
+                recovery_reason="approved" if recovered else "reconciliation_mismatch",
+                recovery_checked_at=result["checked_at"],
+            )
+            self.store.upsert_account(account_id, account, conn=conn)
+            snapshot = self.store.insert_reconciliation(
+                {
+                    **result,
+                    "account_id": account_id,
+                    "status": result["status"],
+                    "execution_id": "",
+                    "correlation_id": account_id,
+                },
+                conn=conn,
+            )
+            return {**result, "account_status": account["status"], "snapshot_id": snapshot["id"]}
 
     def reconcile(
         self, account_id: str = "paper-default", *, persist: bool = False
