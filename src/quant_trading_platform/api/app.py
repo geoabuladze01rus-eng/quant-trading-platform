@@ -51,6 +51,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.paper_store = paper_store
     app.state.paper_service = PersistentPaperService(paper_store)
     app.state.persistent_audit = PersistentAuditLog(paper_store)
+    # A durable paper account must pass accounting reconciliation before new commands.
+    app.state.paper_recovery = app.state.paper_service.recover(settings.paper_account_id)
     service = None
     if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
         service = MarketDataService(
@@ -74,6 +76,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.market_data = None
         app.state.paper_service = None
         app.state.persistent_audit = None
+        app.state.paper_recovery = None
         app.state.paper_store = None
         paper_store.close()
 
