@@ -1,8 +1,9 @@
 services:
   app:
     build: .
+    # Unauthenticated local Paper Alpha. Never expose this port publicly.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       MARKET_SCOPE: mixed
       TRADING_MODE: paper

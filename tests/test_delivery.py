@@ -17,7 +17,8 @@ def test_dockerfile_starts_fastapi_on_exposed_port() -> None:
 
 def test_compose_preserves_entrypoint_and_locked_defaults_without_env_file() -> None:
     compose = (ROOT / "docker-compose.yml").read_text()
-    assert '"8000:8000"' in compose
+    assert '"127.0.0.1:8000:8000"' in compose
+    assert '"8000:8000"' not in compose
     assert "command:" not in compose
     assert "env_file:" not in compose
     assert "TRADING_MODE: paper" in compose
