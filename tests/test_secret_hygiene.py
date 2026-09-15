@@ -1,6 +1,11 @@
 """Regression checks for local tracked-file secret scanning."""
 
-from scripts.check_secret_hygiene import violations
+from pathlib import Path
+from runpy import run_path
+
+violations = run_path(
+    str(Path(__file__).resolve().parents[1] / "scripts/check_secret_hygiene.py")
+)["violations"]
 
 
 def test_secret_scanner_rejects_env_private_key_and_nonempty_token() -> None:
