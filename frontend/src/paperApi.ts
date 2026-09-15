@@ -11,6 +11,8 @@ export type Balance = Row & { asset: string; available: string; reserved: string
 export type Reconciliation = Row & { status: 'ok' | 'error'; issues: Row[] };
 export interface CommandResult { order: PaperOrder; fills: Row[]; account: Account; balances: Balance[]; positions: Row[]; reconciliation: Reconciliation; explanation: Row; paper_only: true }
 export interface Portfolio { account: Account; balances: Balance[]; orders: PaperOrder[]; fills: Row[]; positions: Row[]; performance: Row; reconciliation: Reconciliation }
+export interface ResidualDecision extends Row { status: 'flat' | 'hedge_required' | 'halted'; reason_code: string; human_reason: string; residual_quantity: string; residual_notional_usd: string | null; mark_source: string | null; mark_age_ms: number | null; configured_cap_usd: string; filled_leg: string; hedge_side: string | null; reason_not_executed: string; hedge_proposal: Row | null; paper_only: true; live_execution: false }
+export interface ResidualObservation extends Row { execution_group_id: string; symbol: string; decision: ResidualDecision; paper_only: true; live_execution: false }
 
 function object(value: unknown): Row {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected object');
@@ -75,6 +77,17 @@ function performance(value: unknown): Row {
   if (v.daily_pnl_usdt !== undefined) decimal(v.daily_pnl_usdt);
   return v;
 }
+function residualDecision(value: unknown): ResidualDecision {
+  const v = object(value);
+  required(v, ['status', 'reason_code', 'human_reason', 'filled_leg', 'reason_not_executed'], ['residual_quantity', 'configured_cap_usd']);
+  nullableDecimal(v.residual_notional_usd);
+  if (!['flat', 'hedge_required', 'halted'].includes(text(v.status)) || v.paper_only !== true || v.live_execution !== false) throw new Error('Unsafe residual decision');
+  if (v.mark_source !== null) text(v.mark_source);
+  if (v.mark_age_ms !== null && (typeof v.mark_age_ms !== 'number' || !Number.isInteger(v.mark_age_ms))) throw new Error('Invalid mark freshness');
+  if (v.status !== 'hedge_required' && v.hedge_proposal !== null) throw new Error('Halted/flat state cannot propose a hedge');
+  if (v.hedge_proposal !== null) { const proposal = object(v.hedge_proposal); if (proposal.confirmable !== false || proposal.execution_enabled !== false) throw new Error('Executable hedge controls are forbidden'); }
+  return v as ResidualDecision;
+}
 function command(value: unknown, preview = false): CommandResult {
   const v = object(value);
   if (v.paper_only !== true) throw new Error('Paper-only state unverified');
@@ -107,6 +120,18 @@ export async function getPortfolio(): Promise<Portfolio> {
     request('/paper/positions', (v) => rows(v, position)), request('/paper/performance', performance), request('/paper/reconciliation', reconciliation),
   ]);
   return { account: a, balances: b, orders: o, fills: f, positions: p, performance: perf, reconciliation: rec };
+}
+export function getResidualExposure(): Promise<ResidualObservation[]> {
+  return request('/paper/residual-exposure', (value) => {
+    const v = object(value);
+    if (v.paper_only !== true || v.live_execution !== false) throw new Error('Unsafe residual view');
+    return rows(v.items, (item) => {
+      const row = object(item);
+      required(row, ['execution_group_id', 'symbol']);
+      if (row.paper_only !== true || row.live_execution !== false) throw new Error('Unsafe observation');
+      return { ...row, decision: residualDecision(row.decision) } as ResidualObservation;
+    });
+  });
 }
 export function getAuditPage(offset: number, filters: { event_type?: string; order_id?: string; reason_code?: string; correlation_id?: string } = {}) {
   const params = new URLSearchParams({ limit: '50', offset: String(offset), ...filters });

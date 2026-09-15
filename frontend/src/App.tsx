@@ -122,6 +122,16 @@ export function App() {
           <button type="button" onClick={() => setRefresh((value) => value + 1)}>Refresh data</button>
         </section>
 
+        <section className="beginner-path panel" aria-label="Paper Alpha in four steps">
+          <div><p className="eyebrow">Первые пять минут</p><h2>Как проверить Paper Alpha</h2><p>PAPER ONLY · no real money · live locked. При stale/error данные не используются.</p></div>
+          <ol>
+            <li><a href="#sources">1. Проверь источники</a></li>
+            <li><a href="#opportunities">2. Посмотри объяснение возможности</a></li>
+            <li><a href="#paper">3. Сделай preview paper order</a></li>
+            <li><a href="#audit">4. Проверь результат и audit</a></li>
+          </ol>
+        </section>
+
         <section className="metric-grid" aria-label="Safety metrics">
           <article className="metric-card warning"><span>Daily loss limit</span><strong>{data ? pct(data.risk.max_daily_loss_pct) : '—'}</strong><small>Portfolio PnL is not provided by this API</small></article>
           <article className="metric-card"><span>Minimum net edge</span><strong>{data ? pct(data.risk.min_expected_net_pct) : '—'}</strong><small>After fees and slippage</small></article>
@@ -129,7 +139,7 @@ export function App() {
           <article className="metric-card danger-soft"><span>Real execution</span><strong>Disabled in UI</strong><small>T-Invest: {data ? 'sandbox' : 'status unverified'}</small></article>
         </section>
 
-        <section className="panel-grid">
+        <section className="panel-grid" id="sources">
           <article className="panel">
             <div className="panel-header"><div><p className="eyebrow">Public / sandbox source state</p><h2>Market health</h2></div><DatabaseZap size={20} /></div>
             <div className="health-list">

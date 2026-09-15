@@ -1,22 +1,34 @@
 # Roadmap
 
-1. **MVP foundation — delivered:** safety gates, detectors, dashboard and regression CI.
-2. **Public data — delivered:** keyless Binance/Bybit/OKX books, normalization,
-   freshness/source health, and a T-Invest sandbox/read boundary.
-3. **Explainable depth simulation — delivered:** fees, slippage reserve,
-   depth-weighted paired fills, reasons, audit, and compatibility API.
-4. **Persistent Paper Alpha — delivered in this branch:** SQLite-funded virtual
-   balances, reservations, lifecycle, partial fills, positions, P&L/cost totals,
-   restart recovery, exact-once command idempotency, structured persistent audit,
-   reconciliation, and a risk-first portfolio UI.
-5. **Paper lifecycle hardening — next:** model independent leg latency and stateful
-   multi-event partial fills; residual exposure, simulated protective hedge,
-   halt/recovery, daily equity snapshots, and migration/backup tooling. Extend the
-   canonical engine/service instead of creating a parallel execution architecture.
-6. **Long-running validation:** observe public feeds, add deterministic recorded
-   fixtures and failure injection, measure beginner comprehension, and validate
-   T-Invest sandbox reads with a separate least-privilege setup.
-7. **Controlled live admission — future and out of scope:** requires a separate
-   explicit acceptance process, authentication/authorization, secret management,
-   independent risk review, operational runbooks, and security approval. Nothing
-   in this roadmap enables or authorizes live trading.
+## A. In main
+
+MVP safety gates, keyless Binance/Bybit/OKX read-only books, source freshness,
+explainable paired depth simulation, persistent SQLite virtual account, exact-once
+paper command idempotency, audit, accounting reconciliation and halted recovery.
+T-Invest remains a sandbox/read-only boundary. No live order implementation exists.
+
+## B. After PR #5 and its stacked foundation PR are merged
+
+PR #5 contributes only the pure `flat` / `hedge_required` / `halted` residual model;
+it does not execute a hedge. The foundation PR adds checked mark source/freshness,
+immutable simulated leg-event DTOs, deterministic event replay, a non-confirmable
+paper hedge proposal, a read-only saved-journal view, beginner guidance, loopback
+Docker binding, pinned Python CI dependencies, secret hygiene and Docker smoke CI.
+The present durable command still pairs buy/sell fills equally; it does not create
+independent execution groups or automatic hedges.
+
+## C. Before long-running paper testing
+
+Require green GitHub CI including a real Docker smoke run, deterministic recorded
+market fixtures, failure injection, feed soak metrics, operator backup/restore drill,
+daily equity snapshots, versioned migrations, and a validated least-privilege
+T-Invest sandbox transport. Independent leg events must enter the existing SQLite
+accounting/audit/idempotency transaction before they can represent real paper
+exposure. Do not deploy the unauthenticated mutable paper API publicly.
+
+## D. Separate future live admission
+
+Out of scope and requires a separate threat model and security review,
+authentication/authorization, secrets outside the repository, independent risk
+review, operational runbooks, a kill switch, gradual rollout, and separate written
+owner authorization. No environment-variable-only unlock is acceptable.
