@@ -162,8 +162,12 @@ export function App() {
           <div className="panel-header"><div><p className="eyebrow">After estimated fees and slippage</p><h2>Opportunities</h2></div><AlertTriangle size={20} /></div>
           <p className="settings-note">Spread compares the ask on the buy venue with the bid on the sell venue. Backend estimates deduct 0.20% fees and 0.05% slippage.</p>
           <p className="settings-note">Approved means eligible for paper simulation, subject to fresh quotes and a new server risk check.</p>
-          {!rows.length ? <p className="empty-state">{data ? 'No data: no eligible opportunities from current market quotes.' : 'Opportunities unavailable. Waiting for a trusted backend response.'}</p> :
-            <div className="table-wrap"><table>
+          {!rows.length ? <p className="empty-state">{data ? 'No data: no eligible opportunities from current market quotes.' : 'Opportunities unavailable. Waiting for a trusted backend response.'}</p> : <>
+            <div className="opportunity-summary-list">{rows.map((item, index) => <article className="opportunity-summary" key={`${item.strategy}-${item.symbol}-${item.buy_venue}-${item.sell_venue}-${index}`}>
+              <div><strong>{item.symbol} · {venueName(item.buy_venue)} → {venueName(item.sell_venue)}</strong><small>{item.strategy} · age {item.data_age_ms} ms at refresh</small></div>
+              <div><span className={`decision ${item.approved ? 'approved' : 'rejected'}`}>{item.approved ? 'Paper eligible' : 'Rejected'}</span><small>Net edge {pct(item.expected_net_pct)} · {item.reason}</small></div>
+            </article>)}</div>
+            <details className="opportunity-details"><summary>Показать полные метрики: gross edge, fees, slippage, net edge и risk decision</summary><div className="table-wrap"><table>
               <thead><tr><th>Strategy</th><th>Symbol</th><th>Buy / sell venues</th><th>Gross</th><th>Fees</th><th>Slippage</th><th>Net edge</th><th>Max notional</th><th>Data age</th><th>Risk decision</th><th>Reason</th></tr></thead>
               <tbody>{rows.map((item, index) => <tr key={`${item.strategy}-${item.symbol}-${item.buy_venue}-${item.sell_venue}-${index}`}>
                 <td>{item.strategy}</td><td>{item.symbol}</td><td>{venueName(item.buy_venue)} / {venueName(item.sell_venue)}</td>
@@ -171,7 +175,7 @@ export function App() {
                 <td className={item.approved ? 'good' : 'muted'}>{pct(item.expected_net_pct)}</td><td>{money.format(item.max_notional_usd)}</td><td>{item.data_age_ms} ms at refresh</td>
                 <td><span className={`decision ${item.approved ? 'approved' : 'rejected'}`}>{item.approved ? 'Paper approved' : 'Rejected'}</span></td><td className="reason-cell">{item.reason}</td>
               </tr>)}</tbody>
-            </table></div>}
+            </table></div></details></>}
         </section>
 
         {data && <PaperExecution opportunities={rows} venues={data.venues} audit={data.audit} receivedAt={receivedAt} maxAge={data.settings.max_market_data_age_ms} />}
