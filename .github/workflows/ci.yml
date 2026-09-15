@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, harden/mvp-safety, 'feature/**']
+    branches: [main, harden/mvp-safety, 'feature/**', 'fix/**']
 
 jobs:
   backend:
@@ -14,7 +14,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install
-        run: pip install -e .[dev]
+        run: pip install -c constraints-py311-linux.txt -e '.[dev]'
+      - name: Secret hygiene
+        run: python scripts/check_secret_hygiene.py
       - name: Lint
         run: ruff check .
       - name: Type check
@@ -39,3 +41,9 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
+  docker-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, localhost health, teardown
+        run: bash scripts/docker_smoke.sh

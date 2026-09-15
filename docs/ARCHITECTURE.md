@@ -55,6 +55,22 @@ reconciliation, filtered audit, preview, create, and cancellation. GET endpoints
 do not write. The earlier in-memory `/paper/orders/simulate` contract remains for
 compatibility and is explicitly not the durable portfolio path.
 
+## Residual review boundary
+
+The canonical durable command still matches buy/sell quantities to common depth.
+Immutable `PaperLegEvent` DTOs and the pure residual assessor represent potential later
+independent outcomes without adding an execution engine. Duplicate event IDs count
+once; conflicting payloads reject. A residual decision is `flat`,
+`hedge_required`, or `halted`. A fresh public-book mark with source/time, a
+configured notional cap and clean accounting are required before showing a
+review-only, non-confirmable paper hedge proposal. No hedge submission is present.
+
+GET `/paper/residual-exposure` derives observations from saved simulated fills and
+read-only reconciliation. It does not poll, persist, execute or repair. Current
+paired fills are flat; an accounting mismatch halts the observation. Independent
+fills would need atomic integration into the existing balance/fill/audit ledger
+before becoming a durable paper execution lifecycle.
+
 Market quote snapshots and unchanged-signal deduplication remain in memory because
 they are transient feed state. Durable trading/audit state does not rely on those
 caches. Live execution is not implemented.

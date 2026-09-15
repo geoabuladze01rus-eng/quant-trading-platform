@@ -14,7 +14,7 @@ if unsafe settings are supplied.
 ```bash
 python -m venv .venv
 . .venv/bin/activate
-pip install -e '.[dev]'
+pip install -c constraints-py311-linux.txt -e '.[dev]'
 uvicorn quant_trading_platform.api.app:app --reload
 ```
 
@@ -56,6 +56,7 @@ curl -X POST http://127.0.0.1:8000/paper/orders \
   -d '{"symbol":"BTC/USDT","buy_venue":"binance","sell_venue":"okx","notional_usdt":"10"}'
 curl http://127.0.0.1:8000/paper/account
 curl http://127.0.0.1:8000/paper/reconciliation
+curl http://127.0.0.1:8000/paper/residual-exposure
 curl 'http://127.0.0.1:8000/audit?limit=50&offset=0'
 ```
 
@@ -78,7 +79,17 @@ curl http://127.0.0.1:8000/health
 
 Compose persists the local SQLite file in the `paper-data` volume and explicitly
 keeps live execution and the acceptance gate false. This is an unauthenticated
-local alpha, not a public deployment.
+local alpha bound to `127.0.0.1`, not a public deployment. A local Docker smoke
+needs a running daemon; CI builds Compose, checks localhost `/health` for paper
+mode/live lock, and tears the container down.
+
+Python CI installs exact direct/transitive versions from
+`constraints-py311-linux.txt`. Regenerate intentionally for Python 3.11/Linux
+with `uv pip compile pyproject.toml --extra dev --python-version 3.11
+--python-platform x86_64-unknown-linux-gnu -o constraints-py311-linux.txt`,
+then rerun the full suite before committing updated pins. `npm ci` uses the
+tracked frontend lock. `python scripts/check_secret_hygiene.py` reports only
+file names and violation codes.
 
 ## Verification
 
