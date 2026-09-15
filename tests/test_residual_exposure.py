@@ -55,9 +55,24 @@ def test_large_residual_halts_instead_of_auto_hedging() -> None:
 @pytest.mark.parametrize(
     "arguments",
     [
-        {"buy_quantity": "-1", "sell_quantity": "0", "mark_price_usd": "100", "max_unhedged_notional_usd": "10"},
-        {"buy_quantity": "1", "sell_quantity": "0", "mark_price_usd": "0", "max_unhedged_notional_usd": "10"},
-        {"buy_quantity": "1", "sell_quantity": "0", "mark_price_usd": "NaN", "max_unhedged_notional_usd": "10"},
+        {
+            "buy_quantity": "-1",
+            "sell_quantity": "0",
+            "mark_price_usd": "100",
+            "max_unhedged_notional_usd": "10",
+        },
+        {
+            "buy_quantity": "1",
+            "sell_quantity": "0",
+            "mark_price_usd": "0",
+            "max_unhedged_notional_usd": "10",
+        },
+        {
+            "buy_quantity": "1",
+            "sell_quantity": "0",
+            "mark_price_usd": "NaN",
+            "max_unhedged_notional_usd": "10",
+        },
     ],
 )
 def test_invalid_input_is_rejected(arguments: dict[str, str]) -> None:
