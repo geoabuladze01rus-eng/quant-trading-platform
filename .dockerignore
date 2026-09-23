@@ -13,4 +13,6 @@ frontend/dist
 dist
 build
 *.egg-info
-data/*.sqlite3*
+**/data/*.sqlite3*
+**/backups/*.sqlite3*
+**/backups/*.db*

@@ -73,6 +73,7 @@ curl http://127.0.0.1:8000/paper/fills
 curl http://127.0.0.1:8000/paper/positions
 curl http://127.0.0.1:8000/paper/performance
 curl http://127.0.0.1:8000/paper/reconciliation
+curl http://127.0.0.1:8000/paper/residual-exposure
 curl 'http://127.0.0.1:8000/audit?limit=50&offset=0&event_type=paper_order_filled'
 ```
 
@@ -88,6 +89,10 @@ pre-funded inventory. Therefore unrealized P&L remains `null` while
 Reported performance is hypothetical, not independently verified and never a promise
 of profit.
 
-The next milestone is stateful multi-event fills, independent leg failure/residual
-exposure, simulated protective hedging and halt/recovery within the same canonical
-execution architecture.
+The residual view is observation-only. It replays saved simulated leg events and
+shows `flat` for currently paired fills. An accounting mismatch produces `halted`
+and no paper hedge proposal. A pure immutable DTO can model future independent
+partial legs with fresh mark/cap evidence, but it is not yet an accounting command
+and never executes a hedge. The next milestone is atomic integration of such leg
+events into the existing balance/fill/audit ledger, followed by long-running paper
+validation; no parallel engine or uncontrolled background hedge is planned.

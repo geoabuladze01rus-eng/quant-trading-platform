@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { cancelOrder, createOrder, getAuditPage, getOrder, getPortfolio, paperConfigured, previewOrder } from './paperApi';
-import type { CommandResult, Json, PaperOrder, Portfolio, Row } from './paperApi';
+import { cancelOrder, createOrder, getAuditPage, getOrder, getPortfolio, getResidualExposure, paperConfigured, previewOrder } from './paperApi';
+import type { CommandResult, Json, PaperOrder, Portfolio, ResidualObservation, Row } from './paperApi';
 import type { AuditEvent, Opportunity, Venue } from './types';
 import { simulationBlock } from './PaperExecution';
 
@@ -22,6 +22,8 @@ function AuditBrowser() {
 export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge }: { opportunities: Opportunity[]; venues: Venue[]; audit: AuditEvent[]; receivedAt: number; maxAge: number }) {
   const [now, setNow] = useState(Date.now()), [revision, setRevision] = useState(0);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
+  const [residuals, setResiduals] = useState<ResidualObservation[] | null>(null);
+  const [residualError, setResidualError] = useState('');
   const [busy, setBusy] = useState(false), [message, setMessage] = useState('');
   const busyRef = useRef(false);
   const [preview, setPreview] = useState<{ item: Opportunity; result: CommandResult } | null>(null);
@@ -31,9 +33,10 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge }:
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 100); return () => clearInterval(timer); }, []);
   useEffect(() => { let active = true; setPortfolio(null); if (paperConfigured) void getPortfolio().then((value) => { if (active) setPortfolio(value); }).catch((cause) => { if (active) setMessage(String(cause.message)); }); return () => { active = false; }; }, [revision]);
+  useEffect(() => { let active = true; setResiduals(null); if (paperConfigured) void getResidualExposure().then((value) => { if (active) { setResiduals(value); setResidualError(''); } }).catch(() => { if (active) setResidualError('Residual review unavailable. Paper preview is paused.'); }); return () => { active = false; }; }, [revision]);
   useEffect(() => { if (preview) dialog.current?.showModal(); else dialog.current?.close(); }, [preview]);
   async function showPreview(item: Opportunity) {
-    if (busyRef.current || simulationBlock(item, venues, Date.now() - receivedAt, maxAge) || !portfolio || uncertain) return;
+    if (busyRef.current || simulationBlock(item, venues, Date.now() - receivedAt, maxAge) || !portfolio || !residuals || residuals.some((row) => row.decision.status !== 'flat') || uncertain) return;
     busyRef.current = true; setBusy(true); setMessage('');
     try { setPreview({ item, result: await previewOrder(item) }); } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Preview unavailable.'); }
     finally { busyRef.current = false; setBusy(false); }
@@ -60,11 +63,26 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge }:
       {portfolio.account.status !== 'active' && <p role="alert">Paper account is halted after an accounting mismatch. New paper orders are blocked until the ledger is repaired.</p>}
       {Array.isArray(portfolio.account.unpriced_pnl_assets) && portfolio.account.unpriced_pnl_assets.length > 0 && <p role="status">Unrealized PnL is unavailable for initial inventory with unknown cost basis. The asset list is shown in Advanced accounting.</p>}
       <Records records={portfolio.reconciliation.issues} /></>}
+    <section className="residual-review" aria-label="Residual exposure review">
+      <h3>Остаточная экспозиция · PAPER ONLY</h3>
+      <p>Реальные деньги не используются. Live locked. Защитный paper-хедж здесь не исполняется автоматически.</p>
+      {residualError && <p role="alert">{residualError}</p>}
+      {paperConfigured && !residuals && !residualError && <p>Проверка остатка загружается; preview временно заблокирован.</p>}
+      {residuals?.length === 0 && <p role="status">Сохранённых исполнений пока нет.</p>}
+      {residuals?.map(({ execution_group_id, symbol, decision }) => <article className={`residual-state residual-${decision.status}`} key={execution_group_id} role={decision.status === 'flat' ? 'status' : 'alert'}>
+        <strong>{symbol} · {decision.status === 'flat' ? 'Объёмы совпадают' : decision.status === 'hedge_required' ? 'Нужна ручная проверка остатка' : 'Остановлено — проверьте учёт и котировки'}</strong>
+        <p>{decision.human_reason} · {decision.reason_code}</p>
+        <p>Нога: {decision.filled_leg} · остаток {decision.residual_quantity} · оценка {decision.residual_notional_usd ?? 'нет свежей цены'} USDT · лимит {decision.configured_cap_usd} USDT.</p>
+        <p>Mark: {decision.mark_source ?? 'не подтверждён'} · свежесть {decision.mark_age_ms === null ? 'недоступна' : `${decision.mark_age_ms} ms`}.</p>
+        {decision.status === 'hedge_required' && <p>Предполагаемое направление: {decision.hedge_side}. {decision.reason_not_executed}</p>}
+        {decision.status === 'halted' && <p>Действие: не отправляйте новые paper-команды; проверьте audit, источник mark и reconciliation.</p>}
+      </article>)}
+    </section>
     <h3>Preview a paper opportunity</h3>{!opportunities.length && <p>No opportunities from current sources. Wait for healthy market data.</p>}
     {opportunities.map((item) => { const blocked = simulationBlock(item, venues, now - receivedAt, maxAge); return <article className="paper-opportunity" key={item.id}>
       <h4>{item.symbol} · {item.buy_venue} → {item.sell_venue}</h4><p>{item.summary}</p><p>{item.reason_code}: {item.reason_text}</p>
       <p>Risk gate: {item.risk_score} · fees {item.fees_pct.toFixed(2)}% · slippage {item.slippage_pct.toFixed(2)}% · expected net {item.expected_net_pct.toFixed(4)}%</p>
-      <button disabled={!!blocked || busy || !portfolio || uncertain || portfolio.reconciliation.status === 'error' || portfolio.account.status !== 'active'} onClick={() => void showPreview(item)}>Preview paper order</button><p>{blocked || `Virtual notional ${item.simulation_notional_usd} USDT. Preview does not save an order.`}</p>
+      <button disabled={!!blocked || busy || !portfolio || !residuals || residuals.some((row) => row.decision.status !== 'flat') || uncertain || portfolio.reconciliation.status === 'error' || portfolio.account.status !== 'active'} onClick={() => void showPreview(item)}>Preview paper order</button><p>{blocked || residualError || `Virtual notional ${item.simulation_notional_usd} USDT. Preview does not save an order.`}</p>
       <details><summary>Advanced: sources and decision</summary><p>Gross {item.gross_spread_pct}% · age {Math.round(item.data_age_ms + Math.max(0, now - receivedAt))} ms · maximum {maxAge} ms.</p>{venues.filter((v) => [item.buy_venue, item.sell_venue].includes(v.name)).map((v) => <p key={v.name}>{v.name} · {v.status} · bid {v.bid ?? 'no data'} / ask {v.ask ?? 'no data'} · timestamp {v.timestamp_source ?? 'unknown'} · depth {v.depth_status}, {v.bid_levels}/{v.ask_levels} levels</p>)}{audit.filter((event) => event.opportunity_id === item.id).slice(0, 10).map((event) => <p key={event.id}>{event.timestamp} · {event.who} · {event.reason}</p>)}</details>
     </article>; })}
     <dialog ref={dialog} aria-labelledby="paper-confirm-title" onCancel={() => { if (!busy) setPreview(null); }}>{preview && <><h2 id="paper-confirm-title">Confirm PAPER ONLY order</h2><p>Virtual notional {preview.item.simulation_notional_usd} USDT · {preview.item.symbol}</p><p>{preview.result.order.reason_code}: {preview.result.order.human_reason}</p><p>Preview status: {preview.result.order.status}. Confirmation reruns backend checks against current books and balances.</p><Records records={[preview.result.explanation]} /><button disabled={busy || preview.result.order.status === 'rejected' || preview.result.reconciliation.status === 'error'} onClick={() => void mutate(preview.item)}>Confirm paper order</button><button disabled={busy} onClick={() => setPreview(null)}>Back without creating</button></>}</dialog>

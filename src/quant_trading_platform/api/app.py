@@ -29,6 +29,10 @@ from quant_trading_platform.models import (
 )
 from quant_trading_platform.paper_trading import PaperExecutionEngine
 from quant_trading_platform.paper_trading.models import PaperCommandError
+from quant_trading_platform.paper_trading.residual_exposure import (
+    PaperLegEvent,
+    assess_leg_events,
+)
 from quant_trading_platform.paper_trading.service import PersistentPaperService
 from quant_trading_platform.persistence import SQLitePaperStore
 from quant_trading_platform.risk import RiskDecision, RiskEngine, RiskLimits
@@ -573,6 +577,76 @@ def paper_performance() -> dict[str, object]:
 @app.get("/paper/reconciliation")
 def paper_reconciliation() -> dict[str, object]:
     return serialize_record(_persistent_paper_service().reconcile(settings.paper_account_id))
+
+
+@app.get("/paper/residual-exposure")
+def paper_residual_exposure() -> dict[str, object]:
+    """Inspect saved simulated leg events; never create fills or hedge orders."""
+    service = _persistent_paper_service()
+    fills = service.store.list_fills(settings.paper_account_id)
+    orders = service.store.list_orders(settings.paper_account_id)
+    accounting_ok = service.reconcile(settings.paper_account_id)["status"] == "ok"
+    by_order: dict[str, list[dict[str, object]]] = {}
+    for fill in fills:
+        by_order.setdefault(str(fill["order_id"]), []).append(fill)
+    observations: list[dict[str, object]] = []
+    market_data: MarketDataService | None = getattr(app.state, "market_data", None)
+    for order in orders:
+        order_id = str(order["order_id"])
+        source_fills = by_order.get(order_id, [])
+        if not source_fills:
+            continue
+        events = [
+            PaperLegEvent(
+                order_id,
+                str(fill["id"]),
+                str(fill["side"]),
+                str(fill["venue"]),
+                str(fill.get("leg_order_id") or fill["order_id"]),
+                Decimal(str(fill["quantity"])),
+                int(str(fill["timestamp_ms"])),
+            )
+            for fill in source_fills
+        ]
+        bought = sum(
+            (event.filled_quantity for event in events if event.side == "buy"),
+            Decimal(0),
+        )
+        sold = sum(
+            (event.filled_quantity for event in events if event.side == "sell"),
+            Decimal(0),
+        )
+        mark_price: Decimal | None = None
+        mark_source: str | None = None
+        mark_timestamp: int | None = None
+        if bought != sold and market_data is not None:
+            mark_venue = Venue(str(order["sell_venue" if bought > sold else "buy_venue"]))
+            book = market_data.book_for_simulation(mark_venue, str(order["symbol"]))
+            if book is not None:
+                quote = book.to_quote()
+                mark_price = quote.bid if bought > sold else quote.ask
+                mark_source = f"{mark_venue.value}:public_order_book"
+                mark_timestamp = book.timestamp_ms
+        decision = assess_leg_events(
+            events,
+            mark_price_usd=mark_price,
+            max_unhedged_notional_usd=settings.max_trade_notional_usd,
+            mark_source=mark_source,
+            mark_timestamp_ms=mark_timestamp,
+            now_ms=now_ms(),
+            max_mark_age_ms=settings.max_market_data_age_ms,
+            reconciliation_ok=accounting_ok,
+        )
+        observations.append(
+            serialize_record({
+                "execution_group_id": order_id,
+                "symbol": order["symbol"],
+                "decision": decision.as_dict(),
+                "paper_only": True,
+                "live_execution": False,
+            })
+        )
+    return {"items": observations, "paper_only": True, "live_execution": False}
 
 
 @app.post("/paper/orders/preview")

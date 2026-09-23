@@ -118,6 +118,50 @@ async def test_durable_command_replays_without_double_debit_or_fill(durable_clie
 
 
 @pytest.mark.asyncio
+async def test_residual_read_view_is_flat_and_does_not_write_or_call_orders(
+    durable_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, store = durable_client
+    created = await client.post(
+        "/paper/orders", json=INTENT, headers={"Idempotency-Key": "residual-view"}
+    )
+    assert created.status_code == 200
+    monkeypatch.setattr(
+        "quant_trading_platform.connectors.crypto.client.PublicCryptoConnector.place_order",
+        lambda *_args, **_kwargs: pytest.fail("Connector order method must not be called"),
+    )
+    before = (len(store.list_fills()), store.count_audit())
+    view = await client.get("/paper/residual-exposure")
+    assert view.status_code == 200
+    assert view.json()["paper_only"] is True
+    assert view.json()["live_execution"] is False
+    decision = view.json()["items"][0]["decision"]
+    assert decision["status"] == "flat"
+    assert decision["residual_quantity"] == "0"
+    assert decision["hedge_proposal"] is None
+    assert (len(store.list_fills()), store.count_audit()) == before
+
+
+@pytest.mark.asyncio
+async def test_residual_read_view_halts_on_accounting_mismatch(durable_client) -> None:
+    client, store = durable_client
+    created = await client.post(
+        "/paper/orders", json=INTENT, headers={"Idempotency-Key": "residual-mismatch"}
+    )
+    assert created.status_code == 200
+    original = store.list_fills()[0]
+    store.insert_fill({**original, "id": "extra-leg", "quantity": "0.1"})
+    before = (len(store.list_fills()), store.count_audit())
+    view = await client.get("/paper/residual-exposure")
+    assert view.status_code == 200
+    decision = view.json()["items"][0]["decision"]
+    assert decision["status"] == "halted"
+    assert decision["reason_code"] == "residual_accounting_mismatch"
+    assert decision["hedge_proposal"] is None
+    assert (len(store.list_fills()), store.count_audit()) == before
+
+
+@pytest.mark.asyncio
 async def test_http_idempotency_survives_service_restart(durable_client) -> None:
     client, store = durable_client
     response = await client.post(

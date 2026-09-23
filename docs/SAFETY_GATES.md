@@ -12,6 +12,14 @@ excluded from settings representations and API responses; raw payloads and unkno
 audit fields are rejected. `.env` and SQLite runtime files are ignored by Git and
 the Docker build context.
 
+Compose binds the unauthenticated alpha API to `127.0.0.1` only. This is not an
+authorization system and must never be used as a public deployment. Python CI
+uses pinned Python 3.11/Linux constraints; tracked files are scanned locally for
+committed `.env`, private-key blocks and nonempty key assignments without printing
+their contents. Unused crypto credential fields remain excluded from serialization
+for compatibility but public connectors never read or send them; `.env.example`
+does not invite users to provide trading keys.
+
 ## Paper command boundary
 
 All mutable routes are under `/paper/`. A caller supplies only symbol, buy venue,
@@ -38,6 +46,11 @@ Balances cannot become negative. The transaction atomically persists order,
 reservations, fills, balances, positions, audit, reconciliation snapshot, and the
 idempotent response. Any write failure rolls everything back. Reconciliation
 independently rebuilds balances and reservations and reports structured issues.
+
+The residual assessor is pure and review-only. It cannot call `place_order` or
+simulate a hedge. Missing/stale/future mark evidence, cap breach or accounting
+mismatch gives `halted` with no confirmable proposal. The GET residual view is
+side-effect free and cannot correct a mismatched ledger.
 
 ## User-visible guarantees and limits
 
