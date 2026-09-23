@@ -1,5 +1,5 @@
 import {
-  Activity, AlertTriangle, ArrowDownRight, ArrowRight, BarChart3, Check, ChevronDown,
+  Activity, AlertTriangle, ArrowRight, BarChart3, Check, ChevronDown,
   CircleHelp, Database, FileText, Gauge, LockKeyhole, RefreshCw, Settings,
   ShieldCheck, WalletCards,
 } from 'lucide-react';
