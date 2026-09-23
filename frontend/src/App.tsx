@@ -228,7 +228,7 @@ export function App() {
                     <span>{venueName(item.buy_venue)}</span><ArrowRight size={15} /><span>{venueName(item.sell_venue)}</span>
                   </div>
                   <p>{item.summary}</p>
-                  <small>Котировка обновлена ${item.data_age_ms} мс назад</small>
+                  <small>Котировка обновлена {item.data_age_ms} мс назад</small>
                 </div>
                 <div className="opportunity-result">
                   <span className={`decision-tag ${item.approved ? 'decision-approved' : 'decision-rejected'}`}>
