@@ -109,7 +109,7 @@ export function PaperAlpha({
   const dialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 250);
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
