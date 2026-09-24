@@ -19,6 +19,13 @@ const market = (value: string) => ({
 const venueName = (value: string) => ({
   binance: 'Binance', bybit: 'Bybit', okx: 'OKX', t_invest: 'Т‑Инвестиции',
 }[value] ?? value);
+const strategyName = (value: string) => ({
+  cross_venue_spread: 'Межбиржевой спред',
+}[value] ?? value);
+const auditLabel = (value: string) => ({
+  rejected: 'Отклонено', approved: 'Одобрено', accepted: 'Принято',
+  created: 'Создано', cancelled: 'Отменено', failed: 'Ошибка', filled: 'Исполнено',
+}[value] ?? value);
 const sourceStatus = {
   ok: 'Данные получены', no_data: 'Ожидаем данные', stale: 'Данные устарели',
   error: 'Ошибка источника', disabled: 'Отключён',
@@ -295,7 +302,7 @@ export function App() {
             : <div className="table-wrap"><table><thead><tr><th>Время</th><th>Рынок</th><th>Кто</th><th>Событие</th><th>Стратегия</th><th>Причина</th></tr></thead>
               <tbody>{data.audit.slice(0, 100).map((event) => <tr key={event.id}>
                 <td>{event.timestamp}</td><td>{market(event.market_scope)}</td><td>{event.who ?? 'Система'}</td>
-                <td>{event.event} · {event.decision ?? 'решение'}</td><td>{event.strategy}</td><td className="reason-cell">{event.reason}</td>
+                <td>{auditLabel(event.event)}{event.decision ? ` · ${auditLabel(event.decision)}` : ''}</td><td>{strategyName(event.strategy)}</td><td className="reason-cell">{event.reason}</td>
               </tr>)}</tbody></table></div>}
         </section>
         <footer className="app-footer"><span>Quant Platform · Paper Alpha</span><span><LockKeyhole size={13} /> Только симуляция. Не финансовая рекомендация.</span></footer>
