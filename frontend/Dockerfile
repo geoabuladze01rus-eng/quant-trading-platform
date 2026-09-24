@@ -1,11 +1,11 @@
 FROM node:22-alpine
 
 WORKDIR /app
-COPY --chown=node:node package.json package-lock.json ./
-USER node
+COPY package.json package-lock.json ./
 RUN npm ci
-COPY --chown=node:node . .
+COPY . .
 RUN npm run build
 
+USER node
 EXPOSE 4173
 CMD ["sh", "-c", "npm run preview -- --host 0.0.0.0 --port ${PORT:-4173}"]
