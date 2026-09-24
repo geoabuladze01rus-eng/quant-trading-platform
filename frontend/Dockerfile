@@ -1,11 +1,14 @@
-FROM node:22-alpine
+FROM node:22-alpine AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-RUN npm run build && chown -R node:node /app
+RUN npm run build
 
-USER node
-EXPOSE 4173
-CMD ["sh", "-c", "npm run preview -- --host 0.0.0.0 --port ${PORT:-4173}"]
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf.template /tmp/default.conf.template
+
+EXPOSE 8080
+CMD ["sh", "-c", "sed \"s/__PORT__/${PORT:-8080}/g\" /tmp/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
