@@ -20,13 +20,15 @@ export const mockVenues: Venue[] = [
 export const mockOpportunities: OpportunityResponse = {
   status: 'ok',
   opportunities: [{
-    id: 'demo-rejected', summary: 'Demo: fees and slippage consume the entire spread.',
-    reason_code: 'insufficient_net_edge', reason_text: 'Demo: net edge is below the minimum.', risk_score: 'blocked', simulation_notional_usd: '10',
+    id: 'demo-rejected', summary: 'Демо-расчёт: комиссии и проскальзывание полностью съедают разницу цен.',
+    reason_code: 'insufficient_net_edge',
+    reason_text: 'Итоговая разница после расходов ниже минимального порога.',
+    risk_score: 'blocked', simulation_notional_usd: '10',
     strategy: 'cross_venue_spread', symbol: 'BTC/USDT',
     buy_venue: 'binance', sell_venue: 'bybit', gross_spread_pct: 0.25,
     fees_pct: 0.2, slippage_pct: 0.05, expected_net_pct: 0,
     max_notional_usd: 100, approved: false,
-    reason: 'Demo: net edge after fees and slippage is below the minimum 0.10%.',
+    reason: 'После комиссий и проскальзывания расчётная разница ниже минимального порога 0,10%.',
     data_age_ms: 100,
   }],
 };
@@ -36,6 +38,6 @@ export const mockRisk: Risk = {
   api_error_protection: true, balance_mismatch_protection: true,
 };
 export const mockAudit: AuditEvent[] = [{
-  id: 'demo-rejected', timestamp: 'Demo', market_scope: 'crypto',
+  id: 'demo-rejected', timestamp: 'Демо', market_scope: 'crypto',
   event: 'rejected', strategy: 'cross_venue_spread', reason: mockOpportunities.opportunities[0].reason,
 }];
