@@ -228,7 +228,7 @@ export function PaperAlpha({
 
       <section className="residual-review">
         <div className="residual-heading"><div><p className="eyebrow">Контроль открытого остатка</p><h3>Совпадают ли объёмы двух сторон?</h3></div><Activity size={18} /></div>
-        <p className="panel-lead">Если виртуально исполнены разные объёмы, система остановит новые симуляции. Автоматического hedge нет.</p>
+        <p className="panel-lead">Если виртуально исполнены разные объёмы, система остановит новые симуляции. Автоматически закрывать такой остаток система не будет.</p>
         {residualError && <p role="alert" className="inline-alert">{residualError}</p>}
         {paperConfigured && !residuals && !residualError && <p className="muted">Проверяем сохранённые исполнения…</p>}
         {residuals?.length === 0 && <p className="empty-state">Сохранённых симуляций пока нет.</p>}
@@ -238,7 +238,7 @@ export function PaperAlpha({
               decision.status === 'hedge_required' ? 'Остаток требует проверки' : 'Симуляция остановлена'}</strong>
             <p>{decision.human_reason}</p>
             <small>Причина: {decision.reason_code} · остаток {decision.residual_quantity} · оценка {decision.residual_notional_usd ?? 'нет свежей цены'} USDT</small>
-            {decision.status !== 'flat' && <p className="muted">Не создавайте новые симуляции. Проверьте журнал и сверку учёта. Hedge не отправляется.</p>}
+            {decision.status !== 'flat' && <p className="muted">Не создавайте новые симуляции. Проверьте журнал и сверку учёта. Система не будет автоматически закрывать остаток.</p>}
           </article>
         ))}
       </section>
