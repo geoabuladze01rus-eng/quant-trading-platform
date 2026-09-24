@@ -1,42 +1,71 @@
-import { Activity, AlertTriangle, BarChart3, DatabaseZap, FileText, Gauge, Lock, Settings, ShieldCheck, WalletCards } from 'lucide-react';
+import {
+  Activity, ArrowRight, BarChart3, Check, ChevronDown,
+  CircleHelp, Database, FileText, Gauge, LockKeyhole, RefreshCw, Settings,
+  ShieldCheck, WalletCards,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { getAudit, getOpportunities, getRisk, getSettings, getVenues, isMockMode } from './apiClient';
 import type { AuditEvent, DashboardSettings, OpportunityResponse, Risk, Venue } from './types';
 import { PaperAlpha as PaperExecution } from './PaperAlpha';
 
-const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+const money = new Intl.NumberFormat('ru-RU', {
+  style: 'currency', currency: 'USD', maximumFractionDigits: 0,
+});
 const pct = (value: number) => `${value.toFixed(2)}%`;
-const market = (value: string) => ({ crypto: 'Crypto', russian_stocks: 'Russian market', mixed: 'Mixed' }[value] ?? value);
-const venueName = (value: string) => ({ binance: 'Binance', bybit: 'Bybit', okx: 'OKX', t_invest: 'T-Invest' }[value] ?? value);
-const sourceStatus = { ok: 'Healthy at refresh', no_data: 'No data', stale: 'Stale data', error: 'Source error', disabled: 'Disabled' };
-const sourceMode = { public_read_only: 'Public · read-only', sandbox: 'Sandbox · read-only', disabled: 'Source disabled' };
+const market = (value: string) => ({
+  crypto: 'Крипторынок', russian_stocks: 'Российский рынок', mixed: 'Смешанный рынок',
+}[value] ?? value);
+const venueName = (value: string) => ({
+  binance: 'Binance', bybit: 'Bybit', okx: 'OKX', t_invest: 'Т‑Инвестиции',
+}[value] ?? value);
+const sourceStatus = {
+  ok: 'Данные получены', no_data: 'Ожидаем данные', stale: 'Данные устарели',
+  error: 'Ошибка источника', disabled: 'Отключён',
+};
+const sourceMode = {
+  public_read_only: 'Публичные данные · только чтение',
+  sandbox: 'Песочница · только чтение',
+  disabled: 'Источник отключён',
+};
 
 function MarketSource({ venue }: { venue: Venue }) {
   const hasQuote = venue.bid !== null && venue.ask !== null;
   const unavailable = venue.status !== 'ok';
   const explanation = {
-    ok: `${venue.mode === 'sandbox' ? 'Sandbox' : 'Public'} quote received. Real execution remains locked.`,
-    no_data: venue.mode === 'sandbox' ? 'Sandbox is not connected. No portfolio or market data received.' : 'Waiting for a valid public order book.',
-    stale: 'Quote is too old and excluded from opportunities.',
-    error: 'Source request or validation failed. Quotes are excluded from opportunities.',
-    disabled: 'Source polling is disabled.',
+    ok: 'Источник отвечает. Котировки используются только для расчётов.',
+    no_data: venue.mode === 'sandbox'
+      ? 'Песочница не подключена. Портфель и котировки не получены.'
+      : 'Ждём корректный биржевой стакан.',
+    stale: 'Котировка устарела и исключена из расчёта возможностей.',
+    error: 'Не удалось проверить источник. Его котировки не используются.',
+    disabled: 'Получение данных для этого источника отключено.',
   }[venue.status];
-  return <article className={`source-card source-${venue.status}`} aria-label={`${venueName(venue.name)} source state`}>
-    <div className="source-heading">
-      <strong>{venueName(venue.name)}</strong>
-      <span className={`status-pill source-status source-status-${venue.status}`}>{sourceStatus[venue.status]}</span>
-    </div>
-    <small>{market(venue.market)} · {isMockMode ? 'Demo fixture · source not connected' : sourceMode[venue.mode]}</small>
-    <p className="source-explanation">{explanation}</p>
-    {hasQuote && <div className={unavailable ? 'source-quote muted' : 'source-quote'}>
-      <span>{venue.symbol} {unavailable ? '· last good quote (reference only)' : '· at refresh'}</span>
-      <span>Bid {venue.bid} / Ask {venue.ask}</span>
-    </div>}
-    <small>Data age at refresh: {venue.data_age_ms === null ? 'unavailable' : `${venue.data_age_ms} ms`}</small>
-    {venue.timestamp_source && <small>Timestamp: {venue.timestamp_source === 'exchange' ? 'exchange clock' : venue.timestamp_source === 'request_start' ? 'local request start (exchange time unavailable)' : venue.timestamp_source === 'receipt' ? 'local receipt time (exchange time unavailable)' : 'unknown source'}</small>}
-    {venue.error && <small className="source-error-detail">Source reported an error. Retry occurs through backend polling.</small>}
-  </article>;
+
+  return (
+    <article className={`source-card source-${venue.status}`}>
+      <div className="source-heading">
+        <strong>{venueName(venue.name)}</strong>
+        <span className={`source-status source-status-${venue.status}`}>
+          <i aria-hidden="true" />{sourceStatus[venue.status]}
+        </span>
+      </div>
+      <small>{market(venue.market)} · {isMockMode ? 'Демонстрационные данные' : sourceMode[venue.mode]}</small>
+      <p className="source-explanation">{explanation}</p>
+      {hasQuote && (
+        <div className={unavailable ? 'source-quote muted' : 'source-quote'}>
+          <span>{venue.symbol} {unavailable ? '· последняя котировка, только для справки' : '· актуально на момент обновления'}</span>
+          <span>Покупка {venue.ask} · Продажа {venue.bid}</span>
+        </div>
+      )}
+      <small>Возраст данных: {venue.data_age_ms === null ? 'неизвестен' : `${venue.data_age_ms} мс`}</small>
+      {venue.timestamp_source && (
+        <small>Время: {venue.timestamp_source === 'exchange' ? 'биржевое' :
+          venue.timestamp_source === 'request_start' ? 'начало запроса' :
+          venue.timestamp_source === 'receipt' ? 'получение ответа' : 'источник неизвестен'}</small>
+      )}
+    </article>
+  );
 }
 
 interface Dashboard {
@@ -67,17 +96,16 @@ export function App() {
         if (settings.live_trading_enabled || settings.trading_mode === 'live' ||
             !settings.t_invest_sandbox || !risk.live_trading_locked ||
             venues.some((venue) => venue.live_execution)) {
-          throw new Error('Unsafe backend configuration. Paper/sandbox safety settings could not be confirmed.');
+          throw new Error('Не удалось подтвердить безопасный paper-режим. Действия заблокированы.');
         }
         setData({ settings, venues, opportunities, risk, audit });
         setReceivedAt(requestedAt);
         setError('');
-        setUpdatedAt(new Date().toLocaleTimeString());
+        setUpdatedAt(new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }));
       } catch (cause) {
         if (disposed) return;
-        // Clear the previous snapshot: old approvals must not look current during an outage.
         setData(null);
-        setError(cause instanceof Error ? cause.message : 'Backend unavailable. Data is not trusted.');
+        setError(cause instanceof Error ? cause.message : 'Сервер недоступен. Данные не проверены.');
       } finally {
         if (!disposed && !isMockMode) timer = setTimeout(() => void load(), 10000);
       }
@@ -91,127 +119,186 @@ export function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">QT</div>
-          <div><strong>Quant Platform</strong><span>Mixed-market control</span></div>
-        </div>
-        <nav className="nav-list" aria-label="Main navigation">
-          <a className="nav-item active" href="#command"><Gauge size={18} /> Command center</a>
-          <a className="nav-item" href="#opportunities"><BarChart3 size={18} /> Opportunities</a>
-          <a className="nav-item" href="#paper"><WalletCards size={18} /> Paper portfolio</a>
-          <a className="nav-item" href="#risk"><ShieldCheck size={18} /> Risk center</a>
-          <a className="nav-item" href="#audit"><FileText size={18} /> Audit log</a>
-          <a className="nav-item" href="#settings"><Settings size={18} /> Settings</a>
+        <a className="brand" href="#overview" aria-label="Quant Platform — главная">
+          <span className="brand-mark">Q</span>
+          <span className="brand-copy"><strong>Quant Platform</strong><small>Понятная paper-торговля</small></span>
+        </a>
+        <div className="sidebar-mode"><span className="mode-dot" /> Учебный режим · без денег</div>
+        <nav className="nav-list" aria-label="Главная навигация">
+          <a className="nav-item active" href="#overview"><Gauge size={18} /> Обзор</a>
+          <a className="nav-item" href="#sources"><Database size={18} /> Рыночные данные</a>
+          <a className="nav-item" href="#opportunities"><BarChart3 size={18} /> Возможности</a>
+          <a className="nav-item" href="#paper"><WalletCards size={18} /> Paper-портфель</a>
+          <a className="nav-item" href="#risk"><ShieldCheck size={18} /> Защита и риск</a>
+          <a className="nav-item" href="#audit"><FileText size={18} /> Журнал решений</a>
+          <a className="nav-item" href="#settings"><Settings size={18} /> Настройки</a>
         </nav>
+        <div className="sidebar-foot">
+          <LockKeyhole size={16} />
+          <span><strong>Реальные сделки выключены</strong><small>Биржевые ключи не подключены</small></span>
+        </div>
       </aside>
-      <main className="main-content">
-        <header className="topbar" id="command">
-          <div><p className="eyebrow">Crypto arbitrage + T-Invest research</p><h1>Command center</h1></div>
-          <div className="mode-cluster" aria-label="Platform state">
-            <span className="status-pill paper">Mode: {data?.settings.trading_mode ?? 'unknown'}</span>
-            <span className="status-pill paper">Scope: {data ? market(data.settings.market_scope) : 'unknown'}</span>
-            <span className="status-pill locked"><Lock size={14} /> Live locked · paper simulation only</span>
+
+      <main className="main-content" id="overview">
+        <header className="topbar">
+          <div className="topbar-heading">
+            <p className="eyebrow">Ваш учебный торговый кабинет</p>
+            <h1>Добро пожаловать в Paper Alpha</h1>
+            <p className="page-intro">Здесь можно изучать рыночные данные и проверять расчёты без реальных денег.</p>
           </div>
+          <button className="button button-secondary refresh-button" type="button"
+            onClick={() => setRefresh((value) => value + 1)}>
+            <RefreshCw size={16} /> Обновить данные
+          </button>
         </header>
 
-        <section className={`data-notice ${error ? 'data-error' : ''}`} role={error ? 'alert' : 'status'}>
-          <div>
-            <strong>{error ? 'Data unavailable — execution remains locked' : isMockMode ? 'Demo / mock data' : data ? 'Backend connected — public data / paper only' : 'Connecting to backend…'}</strong>
-            <p>{error || (isMockMode ? 'Illustrative fixtures only. Configure VITE_API_BASE_URL to read backend data.' : `Last successful refresh: ${updatedAt || 'pending'}. Refreshes every 10 seconds.`)}</p>
+        <div className="safety-banner" role={error ? 'alert' : 'status'}>
+          <div className="safety-icon"><LockKeyhole size={18} /></div>
+          <div className="safety-copy">
+            <strong>{error ? 'Данные не подтверждены' : isMockMode ? 'Демонстрационный режим' : data ? 'Paper-режим активен' : 'Подключаемся к серверу'}</strong>
+            <p>{error || (isMockMode
+              ? 'Показаны учебные примеры. Биржи не подключены, действия с портфелем недоступны.'
+              : data
+                ? `Используются публичные котировки. Последнее обновление: ${updatedAt || 'ожидается'}.`
+                : 'Проверяем соединение и защитные настройки.')}</p>
           </div>
-          <button type="button" onClick={() => setRefresh((value) => value + 1)}>Refresh data</button>
+          <span className="live-lock"><LockKeyhole size={14} /> Реальные ордера выключены</span>
+        </div>
+
+        <section className="getting-started" aria-label="Как пользоваться кабинетом">
+          <div className="section-heading">
+            <div><p className="eyebrow">Начните здесь</p><h2>Три шага, чтобы разобраться</h2></div>
+            <span className="beginner-badge"><CircleHelp size={15} /> Не нужен опыт в трейдинге</span>
+          </div>
+          <div className="step-grid">
+            <a className="step-card" href="#sources"><span className="step-number">01</span><span><strong>Проверьте данные</strong><small>Убедитесь, что источники отвечают и котировки свежие.</small></span><ArrowRight size={17} /></a>
+            <a className="step-card" href="#opportunities"><span className="step-number">02</span><span><strong>Изучите расчёт</strong><small>Посмотрите комиссии, проскальзывание и итоговую разницу цен.</small></span><ArrowRight size={17} /></a>
+            <a className="step-card" href="#paper"><span className="step-number">03</span><span><strong>Откройте симуляцию</strong><small>Проверьте, как выглядела бы сделка в виртуальном портфеле.</small></span><ArrowRight size={17} /></a>
+          </div>
         </section>
 
-        <section className="beginner-path panel" aria-label="Paper Alpha in four steps">
-          <div><p className="eyebrow">Первые пять минут</p><h2>Как проверить Paper Alpha</h2><p>PAPER ONLY · no real money · live locked. При stale/error данные не используются.</p></div>
-          <ol>
-            <li><a href="#sources">1. Проверь источники</a></li>
-            <li><a href="#opportunities">2. Посмотри объяснение возможности</a></li>
-            <li><a href="#paper">3. Сделай preview paper order</a></li>
-            <li><a href="#audit">4. Проверь результат и audit</a></li>
-          </ol>
+        <section className="metric-grid" aria-label="Основные ограничения">
+          <article className="metric-card metric-card-accent"><span>Минимальная выгода после расходов</span><strong>{data ? pct(data.risk.min_expected_net_pct) : '—'}</strong><small>Комиссии и проскальзывание уже учитываются</small></article>
+          <article className="metric-card"><span>Лимит виртуальной сделки</span><strong>{data ? money.format(data.risk.max_trade_notional_usd) : '—'}</strong><small>Ограничение paper-симуляции</small></article>
+          <article className="metric-card"><span>Максимальная дневная просадка</span><strong>{data ? pct(data.risk.max_daily_loss_pct) : '—'}</strong><small>При превышении риск-система блокирует действие</small></article>
+          <article className="metric-card metric-card-lock"><span>Реальная торговля</span><strong><LockKeyhole size={17} /> Заблокирована</strong><small>В этой версии нельзя отправить ордер на биржу</small></article>
         </section>
 
-        <section className="metric-grid" aria-label="Safety metrics">
-          <article className="metric-card warning"><span>Daily loss limit</span><strong>{data ? pct(data.risk.max_daily_loss_pct) : '—'}</strong><small>Portfolio PnL is not provided by this API</small></article>
-          <article className="metric-card"><span>Minimum net edge</span><strong>{data ? pct(data.risk.min_expected_net_pct) : '—'}</strong><small>After fees and slippage</small></article>
-          <article className="metric-card"><span>Per-trade notional limit</span><strong>{data ? money.format(data.risk.max_trade_notional_usd) : '—'}</strong><small>Paper simulation only</small></article>
-          <article className="metric-card danger-soft"><span>Real execution</span><strong>Disabled in UI</strong><small>T-Invest: {data ? 'sandbox' : 'status unverified'}</small></article>
-        </section>
-
-        <section className="panel-grid" id="sources">
-          <article className="panel">
-            <div className="panel-header"><div><p className="eyebrow">Public / sandbox source state</p><h2>Market health</h2></div><DatabaseZap size={20} /></div>
+        <section className="content-grid">
+          <article className="panel" id="sources">
+            <div className="panel-header">
+              <div><p className="eyebrow">Сначала проверьте</p><h2>Состояние источников</h2></div>
+              <span className="icon-tile"><Database size={18} /></span>
+            </div>
+            <p className="panel-lead">Устаревшие данные не используются для расчёта возможности.</p>
             <div className="health-list">
               {data?.venues.map((venue) => <MarketSource venue={venue} key={venue.name} />)}
-              {!data && <p className="empty-state">Venue health unavailable. Binance / Bybit / OKX / T-Invest are not verified.</p>}
+              {!data && <p className="empty-state">Состояние бирж пока неизвестно. Не принимайте решения по этим данным.</p>}
             </div>
           </article>
+
           <article className="panel">
-            <div className="panel-header"><div><p className="eyebrow">Decision stream</p><h2>Recent bot logic</h2></div><Activity size={20} /></div>
-            <div className="decision-list">
-              {data?.audit.slice(0, 4).map((event) => <div className="decision-row" key={event.id}>
-                <strong>{event.event}</strong><small>{event.reason}</small>
-              </div>)}
-              {!data?.audit.length && <p className="empty-state">{data ? 'No audit events recorded.' : 'Audit data unavailable.'}</p>}
+            <div className="panel-header">
+              <div><p className="eyebrow">Прозрачность решений</p><h2>Что делает система</h2></div>
+              <span className="icon-tile"><Activity size={18} /></span>
+            </div>
+            <p className="panel-lead">Каждый результат можно объяснить и проверить.</p>
+            <div className="principle-list">
+              <div><span className="principle-icon"><Check size={15} /></span><p><strong>Считает итоговую разницу</strong><small>Вычитает комиссии и ожидаемое проскальзывание.</small></p></div>
+              <div><span className="principle-icon"><Check size={15} /></span><p><strong>Проверяет ограничения</strong><small>Свежесть данных, размер сделки и виртуальный баланс.</small></p></div>
+              <div><span className="principle-icon"><Check size={15} /></span><p><strong>Объясняет отказ</strong><small>Показывает причину, если условие не выполнено.</small></p></div>
+              <div><span className="principle-icon principle-icon-lock"><LockKeyhole size={14} /></span><p><strong>Не торгует реальными средствами</strong><small>Биржи доступны только для получения публичных котировок.</small></p></div>
             </div>
           </article>
         </section>
 
-        <section className="panel" id="opportunities">
-          <div className="panel-header"><div><p className="eyebrow">After estimated fees and slippage</p><h2>Opportunities</h2></div><AlertTriangle size={20} /></div>
-          <p className="settings-note">Spread compares the ask on the buy venue with the bid on the sell venue. Backend estimates deduct 0.20% fees and 0.05% slippage.</p>
-          <p className="settings-note">Approved means eligible for paper simulation, subject to fresh quotes and a new server risk check.</p>
-          {!rows.length ? <p className="empty-state">{data ? 'No data: no eligible opportunities from current market quotes.' : 'Opportunities unavailable. Waiting for a trusted backend response.'}</p> : <>
-            <div className="opportunity-summary-list">{rows.map((item, index) => <article className="opportunity-summary" key={`${item.strategy}-${item.symbol}-${item.buy_venue}-${item.sell_venue}-${index}`}>
-              <div><strong>{item.symbol} · {venueName(item.buy_venue)} → {venueName(item.sell_venue)}</strong><small>{item.strategy} · age {item.data_age_ms} ms at refresh</small></div>
-              <div><span className={`decision ${item.approved ? 'approved' : 'rejected'}`}>{item.approved ? 'Paper eligible' : 'Rejected'}</span><small>Net edge {pct(item.expected_net_pct)} · {item.reason}</small></div>
-            </article>)}</div>
-            <details className="opportunity-details"><summary>Показать полные метрики: gross edge, fees, slippage, net edge и risk decision</summary><div className="table-wrap"><table>
-              <thead><tr><th>Strategy</th><th>Symbol</th><th>Buy / sell venues</th><th>Gross</th><th>Fees</th><th>Slippage</th><th>Net edge</th><th>Max notional</th><th>Data age</th><th>Risk decision</th><th>Reason</th></tr></thead>
-              <tbody>{rows.map((item, index) => <tr key={`${item.strategy}-${item.symbol}-${item.buy_venue}-${item.sell_venue}-${index}`}>
-                <td>{item.strategy}</td><td>{item.symbol}</td><td>{venueName(item.buy_venue)} / {venueName(item.sell_venue)}</td>
-                <td>{pct(item.gross_spread_pct)}</td><td>{pct(item.fees_pct)}</td><td>{pct(item.slippage_pct)}</td>
-                <td className={item.approved ? 'good' : 'muted'}>{pct(item.expected_net_pct)}</td><td>{money.format(item.max_notional_usd)}</td><td>{item.data_age_ms} ms at refresh</td>
-                <td><span className={`decision ${item.approved ? 'approved' : 'rejected'}`}>{item.approved ? 'Paper approved' : 'Rejected'}</span></td><td className="reason-cell">{item.reason}</td>
-              </tr>)}</tbody>
-            </table></div></details></>}
+        <section className="panel opportunity-panel" id="opportunities">
+          <div className="panel-header">
+            <div><p className="eyebrow">Без обещаний доходности</p><h2>Возможности рынка</h2></div>
+            <span className="icon-tile"><BarChart3 size={18} /></span>
+          </div>
+          <p className="panel-lead">Система сравнивает цену покупки и продажи, затем вычитает расходы. Положительное число — расчётная разница, а не гарантированная прибыль.</p>
+          {!rows.length
+            ? <div className="empty-card"><span className="empty-icon"><Activity size={18} /></span><div><strong>{data ? 'Подходящих возможностей сейчас нет' : 'Данные пока не загружены'}</strong><p>{data ? 'Это нормально. Система не должна придумывать сигнал, если условия не выполнены.' : 'Сначала дождитесь подтверждённого соединения.'}</p></div></div>
+            : <div className="opportunity-list">{rows.map((item, index) => (
+              <article className="opportunity-card" key={`${item.strategy}-${item.symbol}-${item.buy_venue}-${item.sell_venue}-${index}`}>
+                <div className="opportunity-main">
+                  <div className="opportunity-route">
+                    <span className="symbol-badge">{item.symbol}</span>
+                    <span>{venueName(item.buy_venue)}</span><ArrowRight size={15} /><span>{venueName(item.sell_venue)}</span>
+                  </div>
+                  <p>{item.summary}</p>
+                  <small>Котировка обновлена {item.data_age_ms} мс назад</small>
+                </div>
+                <div className="opportunity-result">
+                  <span className={`decision-tag ${item.approved ? 'decision-approved' : 'decision-rejected'}`}>
+                    {item.approved ? 'Можно проверить в симуляции' : 'Сделка отклонена'}
+                  </span>
+                  <strong className={item.expected_net_pct > 0 ? 'net-positive' : 'net-neutral'}>{pct(item.expected_net_pct)}</strong>
+                  <small>расчётная разница после расходов</small>
+                </div>
+                <details className="opportunity-details">
+                  <summary>Почему такой результат? <ChevronDown size={15} /></summary>
+                  <p className="plain-reason">{item.reason_text || item.reason}</p>
+                  <div className="compact-metrics">
+                    <span>Разница цен <strong>{pct(item.gross_spread_pct)}</strong></span>
+                    <span>Комиссии <strong>−{pct(item.fees_pct)}</strong></span>
+                    <span>Проскальзывание <strong>−{pct(item.slippage_pct)}</strong></span>
+                    <span>Максимальный размер <strong>{money.format(item.max_notional_usd)}</strong></span>
+                    <span>Проверка риска <strong>{item.approved ? 'Пройдена' : 'Не пройдена'}</strong></span>
+                  </div>
+                  <small>Расчётный размер для симуляции: {item.simulation_notional_usd} USDT</small>
+                </details>
+              </article>
+            ))}</div>}
         </section>
 
         {data && <PaperExecution opportunities={rows} venues={data.venues} audit={data.audit} receivedAt={receivedAt} maxAge={data.settings.max_market_data_age_ms} />}
-        <section className="panel-grid" id="risk">
+
+        <section className="content-grid" id="risk">
           <article className="panel">
-            <div className="panel-header"><div><p className="eyebrow">Protections</p><h2>Risk center</h2></div><ShieldCheck size={20} /></div>
-            {data ? <ul className="check-list">
-              <li>Daily loss limit: {pct(data.risk.max_daily_loss_pct)}</li>
-              <li>Stale data protection: {data.risk.stale_data_protection ? 'enabled' : 'DISABLED'}</li>
-              <li>Balance mismatch protection: {data.risk.balance_mismatch_protection ? 'enabled' : 'DISABLED'}</li>
-              <li>API error protection: {data.risk.api_error_protection ? 'enabled' : 'DISABLED'}</li>
-              <li>Live trading: locked</li><li>Crypto / Russian market / Mixed scopes</li>
-            </ul> : <p className="empty-state">Risk configuration unavailable. Safety state is unverified.</p>}
-          </article>
-          <article className="panel" id="settings">
-            <div className="panel-header"><div><p className="eyebrow">Non-secret config</p><h2>Settings preview</h2></div><Settings size={20} /></div>
-            <div className="settings-grid">
-              <label>Mode <input value={data?.settings.trading_mode ?? 'unknown'} readOnly /></label>
-              <label>Market scope <input value={data ? market(data.settings.market_scope) : 'unknown'} readOnly /></label>
-              <label>T-Invest <input value={data ? 'sandbox' : 'unverified'} readOnly /></label>
-              <label>Live execution <input value="locked — no order controls" readOnly /></label>
+            <div className="panel-header">
+              <div><p className="eyebrow">Защитные правила</p><h2>Как система ограничивает риск</h2></div>
+              <span className="icon-tile"><ShieldCheck size={18} /></span>
             </div>
-            <p className="settings-note">API secrets are never shown or edited in the UI.</p>
+            {data ? <ul className="protection-list">
+              <li><Check size={16} /> Устаревшие данные блокируют расчёт <strong>{data.risk.stale_data_protection ? 'Включено' : 'Не подтверждено'}</strong></li>
+              <li><Check size={16} /> Ошибка источника блокирует расчёт <strong>{data.risk.api_error_protection ? 'Включено' : 'Не подтверждено'}</strong></li>
+              <li><Check size={16} /> Несовпадение баланса блокирует сделки <strong>{data.risk.balance_mismatch_protection ? 'Включено' : 'Не подтверждено'}</strong></li>
+              <li><LockKeyhole size={16} /> Отправка реальных ордеров <strong>Заблокирована</strong></li>
+            </ul> : <p className="empty-state">Настройки безопасности не загружены. Состояние не подтверждено.</p>}
+          </article>
+
+          <article className="panel" id="settings">
+            <div className="panel-header">
+              <div><p className="eyebrow">Только просмотр</p><h2>Режим и подключения</h2></div>
+              <span className="icon-tile"><Settings size={18} /></span>
+            </div>
+            <div className="settings-grid">
+              <label>Режим платформы<input value={data?.settings.trading_mode === 'paper' ? 'Paper — симуляция' : data?.settings.trading_mode ?? 'Неизвестно'} readOnly /></label>
+              <label>Рынок<input value={data ? market(data.settings.market_scope) : 'Не проверен'} readOnly /></label>
+              <label>Т‑Инвестиции<input value={data?.settings.t_invest_sandbox ? 'Только sandbox' : 'Не подтверждено'} readOnly /></label>
+              <label>Реальные ордера<input value="Заблокированы" readOnly /></label>
+            </div>
+            <p className="settings-note">Секретные ключи не запрашиваются и не показываются в интерфейсе.</p>
           </article>
         </section>
 
         <section className="panel" id="audit">
-          <div className="panel-header"><div><p className="eyebrow">Explain every action</p><h2>Audit log</h2></div><FileText size={20} /></div>
-          {data && <p>Latest {Math.min(100, data.audit.length)} of {data.audit.length} retained events. Full retained history is available from GET /audit.</p>}
-          {!data?.audit.length ? <p className="empty-state">{data ? 'No audit events recorded.' : 'Audit data unavailable.'}</p> :
-            <div className="table-wrap"><table><thead><tr><th>Timestamp</th><th>Market</th><th>Who</th><th>Event / decision</th><th>Strategy</th><th>Reason</th></tr></thead>
+          <div className="panel-header">
+            <div><p className="eyebrow">История решений</p><h2>Журнал действий</h2></div>
+            <span className="icon-tile"><FileText size={18} /></span>
+          </div>
+          <p className="panel-lead">Журнал помогает понять, что произошло и почему система приняла такое решение.</p>
+          {!data?.audit.length
+            ? <div className="empty-card"><span className="empty-icon"><FileText size={18} /></span><div><strong>{data ? 'Записей пока нет' : 'Журнал недоступен'}</strong><p>Новые решения появятся после получения данных.</p></div></div>
+            : <div className="table-wrap"><table><thead><tr><th>Время</th><th>Рынок</th><th>Кто</th><th>Событие</th><th>Стратегия</th><th>Причина</th></tr></thead>
               <tbody>{data.audit.slice(0, 100).map((event) => <tr key={event.id}>
-                <td>{event.timestamp}</td><td>{market(event.market_scope)}</td><td>{event.who ?? 'Unknown actor'}</td><td>{event.event} / {event.decision ?? 'unknown'}</td><td>{event.strategy}</td><td className="reason-cell">{event.reason}</td>
-              </tr>)}</tbody>
-            </table></div>}
+                <td>{event.timestamp}</td><td>{market(event.market_scope)}</td><td>{event.who ?? 'Система'}</td>
+                <td>{event.event} · {event.decision ?? 'решение'}</td><td>{event.strategy}</td><td className="reason-cell">{event.reason}</td>
+              </tr>)}</tbody></table></div>}
         </section>
+        <footer className="app-footer"><span>Quant Platform · Paper Alpha</span><span><LockKeyhole size={13} /> Только симуляция. Не финансовая рекомендация.</span></footer>
       </main>
     </div>
   );
