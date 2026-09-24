@@ -6,4 +6,7 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  preview: {
+    allowedHosts: ['quant-trading-ui-preview-production.up.railway.app'],
+  },
 });
