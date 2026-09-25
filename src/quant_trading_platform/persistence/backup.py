@@ -100,7 +100,9 @@ def create_backup(database: str | Path, destination: str | Path) -> Path:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Back up or verify the local paper SQLite database.")
+    parser = argparse.ArgumentParser(
+        description="Back up or verify the local paper SQLite database."
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     backup = commands.add_parser("backup", help="create a verified snapshot without overwriting")
     backup.add_argument("--database", type=Path, default=_DEFAULT_DATABASE)
