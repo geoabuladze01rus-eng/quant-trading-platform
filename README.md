@@ -105,5 +105,6 @@ npm run build
 
 Further reading: [architecture](docs/ARCHITECTURE.md),
 [safety gates](docs/SAFETY_GATES.md), [roadmap](docs/ROADMAP.md),
+[paper database backup and recovery](docs/PAPER_DATABASE_BACKUP.md),
 [read-only market data](docs/READ_ONLY_MARKET_DATA.md), and
 [competitor lessons](docs/COMPETITOR_LESSONS.md).
