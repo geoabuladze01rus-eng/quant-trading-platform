@@ -1,5 +1,6 @@
 import sqlite3
 import stat
+from decimal import Decimal
 
 import pytest
 
@@ -35,14 +36,15 @@ def test_backup_uses_wal_snapshot_without_changing_source(tmp_path):
     backup = tmp_path / "paper-copy.db"
     store = SQLitePaperStore(database)
     store.seed_account()
-    store.upsert_balance("paper-default", "USDT", __import__("decimal").Decimal("1234"), __import__("decimal").Decimal("0"))
+    store.upsert_balance("paper-default", "USDT", Decimal("1234"), Decimal("0"))
 
     create_backup(database, backup)
 
     connection = sqlite3.connect(backup)
     try:
         row = connection.execute(
-            "SELECT available FROM paper_balances WHERE account_id = 'paper-default' AND asset = 'USDT'"
+            """SELECT available FROM paper_balances
+            WHERE account_id = 'paper-default' AND asset = 'USDT'"""
         ).fetchone()
         assert row[0] == "1234"
     finally:
