@@ -1,5 +1,4 @@
 from collections.abc import AsyncIterator
-from typing import Any
 
 import httpx
 import pytest
