@@ -68,8 +68,8 @@ to `127.0.0.1`, then run the frontend with
 Before starting the UI, from the repository root run:
 
 ```bash
-python -m scripts.t_invest_sandbox_preflight
-python -m scripts.t_invest_sandbox_preflight --check-accounts
+python -m quant_trading_platform.t_invest_preflight
+python -m quant_trading_platform.t_invest_preflight --check-accounts
 ```
 
 The first command checks local safety settings without network access.
