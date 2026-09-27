@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -125,3 +126,32 @@ def sandbox_orders(account_id: str, request: Request) -> dict[str, object]:
     _trusted_origin(request)
     payload = _sandbox_call(lambda: _client(request).get_orders(account_id))
     return {"environment": "sandbox", "orders": _safe_payload(payload)}
+
+@router.get("/accounts/{account_id}/order-price")
+def sandbox_order_price(
+    account_id: str,
+    request: Request,
+    instrument_id: str,
+    direction: str,
+    quantity_lots: int,
+    limit_price: Decimal,
+) -> dict[str, object]:
+    """Read-only provider estimate; never submits, approves, or reserves an order."""
+    _trusted_origin(request)
+    estimate = _sandbox_call(
+        lambda: _client(request).get_order_price(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            direction=direction,
+            quantity_lots=quantity_lots,
+            limit_price=limit_price,
+        )
+    )
+    return {
+        "environment": "sandbox",
+        "status": "estimate_only",
+        "approved": False,
+        "order_submission_available": False,
+        "reason": "provider_estimate_is_not_risk_approval",
+        "estimate": _safe_payload(estimate),
+    }
