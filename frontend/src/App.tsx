@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { getAudit, getOpportunities, getRisk, getSettings, getVenues, isMockMode } from './apiClient';
 import type { AuditEvent, DashboardSettings, OpportunityResponse, Risk, Venue } from './types';
 import { PaperAlpha as PaperExecution } from './PaperAlpha';
+import { TInvestSandboxPanel } from './TInvestSandboxPanel';
 
 const money = new Intl.NumberFormat('ru-RU', {
   style: 'currency', currency: 'USD', maximumFractionDigits: 0,
@@ -261,6 +262,8 @@ export function App() {
         </section>
 
         {data && <PaperExecution opportunities={rows} venues={data.venues} audit={data.audit} receivedAt={receivedAt} maxAge={data.settings.max_market_data_age_ms} />}
+
+        <TInvestSandboxPanel />
 
         <section className="content-grid" id="risk">
           <article className="panel">
