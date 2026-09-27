@@ -207,7 +207,7 @@ def test_sandbox_price_preview_never_posts_order_even_with_order_gate_off() -> N
     assert estimate["totalOrderAmount"] == {"units": "123"}
     assert len(seen) == 1
     assert seen[0].url.host == "sandbox-invest-public-api.tbank.ru"
-    assert seen[0].url.path.endswith("/SandboxService/GetSandboxOrderPrice")
+    assert seen[0].url.path.endswith(".SandboxService/GetSandboxOrderPrice")
     assert seen[0].method == "POST"
     assert json.loads(seen[0].content) == {
         "accountId": "sandbox-1",
