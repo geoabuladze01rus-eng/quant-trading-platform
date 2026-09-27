@@ -14,8 +14,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from quant_trading_platform.audit_log import AuditLog, PersistentAuditLog
+from quant_trading_platform.api.t_invest_sandbox import router as t_invest_sandbox_router
 from quant_trading_platform.config import MarketScope, Settings, TradingMode
 from quant_trading_platform.connectors.crypto import BinanceConnector, BybitConnector, OKXConnector
+from quant_trading_platform.connectors.t_invest.sandbox import (
+    TInvestSandboxClient,
+    TInvestSandboxTransport,
+)
 from quant_trading_platform.explainability import explain_opportunity, explain_paper_execution
 from quant_trading_platform.explainability.reasons import human_reason
 from quant_trading_platform.market_data.models import NormalizedOrderBook
@@ -68,7 +73,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             on_update=record_detected_opportunities,
         )
     app.state.market_data = service
+    t_invest_transport: TInvestSandboxTransport | None = None
+    app.state.t_invest_settings = settings
+    app.state.t_invest_sandbox_client = None
     try:
+        if (
+            settings.t_invest_api_token
+            and settings.t_invest_sandbox
+            and settings.trading_mode == TradingMode.PAPER
+            and not settings.live_trading_enabled
+        ):
+            t_invest_transport = TInvestSandboxTransport(settings.t_invest_api_token)
+            app.state.t_invest_sandbox_client = TInvestSandboxClient(
+                settings, t_invest_transport
+            )
         if service is not None:
             await service.start()
         yield
@@ -78,6 +96,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _QUOTE_CACHE.clear()
         _LAST_SIGNALS.clear()
         app.state.market_data = None
+        if t_invest_transport is not None:
+            t_invest_transport.close()
+        app.state.t_invest_sandbox_client = None
+        app.state.t_invest_settings = None
         app.state.paper_service = None
         app.state.persistent_audit = None
         app.state.paper_recovery = None
@@ -86,6 +108,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Quant Trading Platform", version="0.1.0", lifespan=lifespan)
+app.include_router(t_invest_sandbox_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
