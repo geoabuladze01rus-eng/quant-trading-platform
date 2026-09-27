@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { getAudit, getOpportunities, getRisk, getSettings, getVenues, isMockMode } from './apiClient';
 import type { AuditEvent, DashboardSettings, OpportunityResponse, Risk, Venue } from './types';
 import { PaperAlpha as PaperExecution } from './PaperAlpha';
+import { TInvestSandboxPanel } from './TInvestSandboxPanel';
 
 const money = new Intl.NumberFormat('ru-RU', {
   style: 'currency', currency: 'USD', maximumFractionDigits: 0,
@@ -136,6 +137,7 @@ export function App() {
           <a className="nav-item" href="#sources"><Database size={18} /> Рыночные данные</a>
           <a className="nav-item" href="#opportunities"><BarChart3 size={18} /> Возможности</a>
           <a className="nav-item" href="#paper"><WalletCards size={18} /> Paper-портфель</a>
+          <a className="nav-item" href="#t-invest-sandbox"><Database size={18} /> Демо-счёт Т‑Инвестиции</a>
           <a className="nav-item" href="#risk"><ShieldCheck size={18} /> Защита и риск</a>
           <a className="nav-item" href="#audit"><FileText size={18} /> Журнал решений</a>
           <a className="nav-item" href="#settings"><Settings size={18} /> Настройки</a>
@@ -261,6 +263,8 @@ export function App() {
         </section>
 
         {data && <PaperExecution opportunities={rows} venues={data.venues} audit={data.audit} receivedAt={receivedAt} maxAge={data.settings.max_market_data_age_ms} />}
+
+        <TInvestSandboxPanel />
 
         <section className="content-grid" id="risk">
           <article className="panel">
