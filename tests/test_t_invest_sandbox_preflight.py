@@ -3,7 +3,7 @@ import json
 import pytest
 
 from quant_trading_platform.config import Settings, TradingMode
-from scripts.t_invest_sandbox_preflight import evaluate, main
+from quant_trading_platform.t_invest_preflight import evaluate, main
 
 
 def config(**overrides: object) -> Settings:
@@ -14,7 +14,7 @@ def test_offline_preflight_never_calls_provider_or_prints_credential(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts import t_invest_sandbox_preflight as preflight
+    from quant_trading_platform import t_invest_preflight as preflight
 
     monkeypatch.setattr(preflight, "Settings", lambda: config())  # type: ignore[misc]
     assert main([]) == 0
