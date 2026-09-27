@@ -43,10 +43,10 @@ async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[httpx.AsyncCl
     )
     transport = FakeTransport()
     sandbox_client = TInvestSandboxClient(config, transport)
-    monkeypatch.setattr(api.app.state, "t_invest_settings", config, raising=False)
-    monkeypatch.setattr(api.app.state, "t_invest_sandbox_client", sandbox_client, raising=False)
+    monkeypatch.setattr(api.state, "t_invest_settings", config, raising=False)
+    monkeypatch.setattr(api.state, "t_invest_sandbox_client", sandbox_client, raising=False)
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=api.app),
+        transport=httpx.ASGITransport(app=api),
         base_url="http://test",
     ) as session:
         yield session
@@ -57,10 +57,10 @@ async def test_status_is_safe_and_does_not_expose_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = Settings(_env_file=None, t_invest_api_token="sandbox-secret")
-    monkeypatch.setattr(api.app.state, "t_invest_settings", config, raising=False)
-    monkeypatch.setattr(api.app.state, "t_invest_sandbox_client", None, raising=False)
+    monkeypatch.setattr(api.state, "t_invest_settings", config, raising=False)
+    monkeypatch.setattr(api.state, "t_invest_sandbox_client", None, raising=False)
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=api.app),
+        transport=httpx.ASGITransport(app=api),
         base_url="http://test",
     ) as session:
         response = await session.get("/t-invest/sandbox/status")
@@ -90,7 +90,7 @@ async def test_accounts_are_filtered_to_configured_sandbox_account(
         t_invest_api_token="sandbox-test-token",
         t_invest_account_id="sandbox-1",
     )
-    monkeypatch.setattr(api.app.state, "t_invest_settings", config, raising=False)
+    monkeypatch.setattr(api.state, "t_invest_settings", config, raising=False)
     response = await client.get("/t-invest/sandbox/accounts")
     assert response.status_code == 200
     assert response.json() == {
@@ -139,10 +139,10 @@ async def test_sandbox_route_does_not_leak_transport_errors(
 ) -> None:
     config = Settings(_env_file=None, t_invest_api_token="sandbox-test-token")
     sandbox_client = TInvestSandboxClient(config, FailingTransport())
-    monkeypatch.setattr(api.app.state, "t_invest_settings", config, raising=False)
-    monkeypatch.setattr(api.app.state, "t_invest_sandbox_client", sandbox_client, raising=False)
+    monkeypatch.setattr(api.state, "t_invest_settings", config, raising=False)
+    monkeypatch.setattr(api.state, "t_invest_sandbox_client", sandbox_client, raising=False)
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=api.app),
+        transport=httpx.ASGITransport(app=api),
         base_url="http://test",
     ) as session:
         response = await session.get("/t-invest/sandbox/accounts")
@@ -154,7 +154,7 @@ async def test_sandbox_route_does_not_leak_transport_errors(
 def test_t_invest_sandbox_api_exposes_only_read_routes() -> None:
     routes = [
         route
-        for route in api.app.routes
+        for route in api.routes
         if getattr(route, "path", "").startswith("/t-invest/sandbox/")
     ]
     assert routes
