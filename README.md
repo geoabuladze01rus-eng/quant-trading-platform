@@ -2,12 +2,12 @@
 
 Safe Python/FastAPI + React foundation for crypto research and Paper Trading
 Alpha. Binance, Bybit and OKX provide keyless public order books. T-Invest is a
-separate sandbox/read-only contour. Defaults are `MARKET_SCOPE=mixed`,
+separate, sandbox-only integration. Defaults are `MARKET_SCOPE=mixed`,
 `TRADING_MODE=paper`, and `LIVE_TRADING_ENABLED=false`.
 
-There is no real order or withdrawal implementation in this repository. Connector
-`place_order` methods remain centrally gated and end in `NotImplementedError` even
-if unsafe settings are supplied.
+There is no production order or withdrawal implementation in this repository.
+The new T-Invest client is pinned to the sandbox host; sandbox order submission
+has its own disabled-by-default gate and does not use production order methods.
 
 ## Run locally
 
@@ -69,8 +69,10 @@ partial-fill, recovery, and limitation details.
 
 FastAPI lifespan starts independent public REST pollers for Binance, Bybit and OKX.
 No trading keys are required. `/venues` distinguishes `no_data`, `stale`, `error`,
-and `disabled`; only fresh normalized books can reach the paper engine. T-Invest
-remains sandbox/read-only and is never mixed into crypto execution.
+and `disabled`; only fresh normalized books can reach the paper engine. T-Invest's
+sandbox client reads sandbox accounts and has a separately gated, bounded
+sandbox-only limit-order method. It is not yet wired to API routes or the browser;
+see [T-Invest sandbox](docs/T_INVEST_SANDBOX.md).
 
 ```bash
 docker compose up --build
@@ -106,5 +108,6 @@ npm run build
 Further reading: [architecture](docs/ARCHITECTURE.md),
 [safety gates](docs/SAFETY_GATES.md), [roadmap](docs/ROADMAP.md),
 [paper database backup and recovery](docs/PAPER_DATABASE_BACKUP.md),
+[T-Invest sandbox](docs/T_INVEST_SANDBOX.md),
 [read-only market data](docs/READ_ONLY_MARKET_DATA.md), and
 [competitor lessons](docs/COMPETITOR_LESSONS.md).
