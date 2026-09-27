@@ -55,10 +55,11 @@ TRADING_MODE=paper
 T_INVEST_SANDBOX=true
 LIVE_TRADING_ENABLED=false
 T_INVEST_SANDBOX_ORDERS_ENABLED=false
-T_INVEST_API_TOKEN=<your-sandbox-token>
+T_INVEST_API_TOKEN=
 ```
 
-Run the backend bound to `127.0.0.1`, then run the frontend with
+Fill the empty token value only in your private `.env`. Run the backend bound
+to `127.0.0.1`, then run the frontend with
 `VITE_API_BASE_URL=http://127.0.0.1:8000` as described in README.
 Check `/t-invest/sandbox/status` first. In the demo-account panel, load
 accounts, select one, open the portfolio, and enter a sandbox instrument UID
