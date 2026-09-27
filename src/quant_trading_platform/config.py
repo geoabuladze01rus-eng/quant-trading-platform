@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     t_invest_api_token: str | None = Field(default=None, repr=False, exclude=True)
     t_invest_account_id: str | None = None
     t_invest_sandbox: bool = True
+    t_invest_sandbox_orders_enabled: bool = False
+    t_invest_sandbox_max_lots: int = Field(default=1, ge=1, le=10)
 
     telegram_bot_token: str | None = Field(default=None, repr=False, exclude=True)
     telegram_chat_id: str | None = None
