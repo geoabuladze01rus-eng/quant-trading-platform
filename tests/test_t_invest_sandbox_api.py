@@ -152,10 +152,10 @@ async def test_sandbox_route_does_not_leak_transport_errors(
 
 
 def test_t_invest_sandbox_api_exposes_only_read_routes() -> None:
-    routes = [
-        route
-        for route in api.routes
-        if getattr(route, "path", "").startswith("/t-invest/sandbox/")
-    ]
-    assert routes
-    assert all(route.methods == {"GET"} for route in routes)
+    paths = {
+        path: methods
+        for path, methods in api.openapi()["paths"].items()
+        if path.startswith("/t-invest/sandbox/")
+    }
+    assert paths
+    assert all(set(methods) == {"get"} for methods in paths.values())
