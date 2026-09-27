@@ -26,7 +26,7 @@ interface AccountData {
   orders: JsonRecord;
 }
 
-const apiBase = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\\/+$/, '');
+const apiBase = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, '');
 
 function object(value: unknown): JsonRecord {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
