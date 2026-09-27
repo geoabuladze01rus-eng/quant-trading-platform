@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface JsonRecord {
   [key: string]: unknown;
@@ -18,6 +18,13 @@ interface SandboxStatus {
 interface SandboxAccount {
   account_id: string;
   status: string;
+}
+
+interface OrderEstimate {
+  status: 'estimate_only';
+  approved: false;
+  order_submission_available: false;
+  estimate: JsonRecord;
 }
 
 interface AccountData {
@@ -106,6 +113,27 @@ async function readAccount(accountId: string): Promise<AccountData> {
   };
 }
 
+async function readEstimate(
+  accountId: string, instrumentId: string, direction: string, limitPrice: string,
+): Promise<OrderEstimate> {
+  const params = new URLSearchParams({
+    instrument_id: instrumentId.trim(),
+    direction,
+    quantity_lots: '1',
+    limit_price: limitPrice.trim(),
+  });
+  const path = `/t-invest/sandbox/accounts/${encodeURIComponent(accountId)}/order-price?${params}`;
+  const response = await readApi(path);
+  if (response.status !== 'estimate_only' || response.approved !== false ||
+      response.order_submission_available !== false) {
+    throw new Error('Сервер не подтвердил безопасный режим оценки. Результат не показан.');
+  }
+  return {
+    status: 'estimate_only', approved: false, order_submission_available: false,
+    estimate: object(response.estimate),
+  };
+}
+
 function moneyValue(value: unknown): string {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'Нет данных';
   const money = value as JsonRecord;
@@ -127,6 +155,42 @@ export function TInvestSandboxPanel() {
   const [data, setData] = useState<AccountData | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [instrumentId, setInstrumentId] = useState('');
+  const [direction, setDirection] = useState('ORDER_DIRECTION_BUY');
+  const [limitPrice, setLimitPrice] = useState('');
+  const [estimate, setEstimate] = useState<OrderEstimate | null>(null);
+  const [estimateError, setEstimateError] = useState('');
+  const [estimating, setEstimating] = useState(false);
+  const estimateRequest = useRef(0);
+
+  function clearEstimate() {
+    estimateRequest.current += 1;
+    setEstimate(null);
+    setEstimateError('');
+    setEstimating(false);
+  }
+
+  async function loadEstimate() {
+    if (!selectedAccount || !status?.ready || !data) return;
+    clearEstimate();
+    const requestId = estimateRequest.current;
+    if (!instrumentId.trim() || !/^(?:0|[1-9]\\d*)(?:\\.\\d{1,9})?$/.test(limitPrice.trim()) ||
+        Number(limitPrice) <= 0) {
+      setEstimateError('Укажите идентификатор инструмента и положительную цену (до 9 знаков после запятой).');
+      return;
+    }
+    setEstimating(true);
+    try {
+      const next = await readEstimate(selectedAccount, instrumentId, direction, limitPrice);
+      if (estimateRequest.current === requestId) setEstimate(next);
+    } catch (cause) {
+      if (estimateRequest.current === requestId) {
+        setEstimateError(cause instanceof Error ? cause.message : 'Оценка не получена.');
+      }
+    } finally {
+      if (estimateRequest.current === requestId) setEstimating(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -144,6 +208,7 @@ export function TInvestSandboxPanel() {
     setAccounts([]);
     setSelectedAccount('');
     setData(null);
+    clearEstimate();
     try {
       const nextStatus = await readStatus();
       setStatus(nextStatus);
@@ -168,6 +233,7 @@ export function TInvestSandboxPanel() {
     setLoading(true);
     setError('');
     setData(null);
+    clearEstimate();
     try {
       setData(await readAccount(selectedAccount));
     } catch (cause) {
@@ -229,6 +295,7 @@ export function TInvestSandboxPanel() {
             <select value={selectedAccount} onChange={(event) => {
               setSelectedAccount(event.target.value);
               setData(null);
+              clearEstimate();
             }}>
               <option value="">Выберите счёт</option>
               {accounts.map((account) => (
@@ -266,6 +333,49 @@ export function TInvestSandboxPanel() {
             <article><span>Стоимость портфеля</span><strong>{moneyValue(portfolioValue)}</strong></article>
             <article><span>Позиции</span><strong>{securities ?? 'Нет данных'}</strong></article>
             <article><span>Заявки</span><strong>{activeOrders ?? 'Нет данных'}</strong></article>
+          </div>
+          <div className="tinvest-preview">
+            <h3>Узнать примерную стоимость заявки</h3>
+            <p>Расчёт Т‑Инвестиций для одной виртуальной доли лота по указанной цене.
+              Это не заявка, не прогноз прибыли и не разрешение риск-системы.
+              Комиссии и проскальзывание могут не входить в оценку.</p>
+            <div className="tinvest-preview-fields">
+              <label>Инструмент (UID или тикер_класс)
+                <input value={instrumentId} onChange={(event) => {
+                  setInstrumentId(event.target.value); clearEstimate();
+                }} placeholder="SBER_TQBR" autoComplete="off" />
+              </label>
+              <label>Направление
+                <select value={direction} onChange={(event) => {
+                  setDirection(event.target.value); clearEstimate();
+                }}>
+                  <option value="ORDER_DIRECTION_BUY">Покупка</option>
+                  <option value="ORDER_DIRECTION_SELL">Продажа</option>
+                </select>
+              </label>
+              <label>Лимитная цена за инструмент
+                <input inputMode="decimal" value={limitPrice} onChange={(event) => {
+                  setLimitPrice(event.target.value); clearEstimate();
+                }} placeholder="123.45" autoComplete="off" />
+              </label>
+            </div>
+            <button className="button button-secondary" type="button"
+              disabled={estimating || !status?.ready}
+              onClick={() => void loadEstimate()}>
+              {estimating ? 'Считаем…' : 'Показать оценку · 1 лот'}
+            </button>
+            {estimateError && <p role="alert" className="inline-alert">{estimateError}</p>}
+            {estimate && (
+              <div className="tinvest-preview-result" role="status">
+                <strong>Только предварительная оценка · сделка не отправлена</strong>
+                <p>Ответ банка: {moneyValue(estimate.estimate.totalOrderAmount)}.
+                  Итоговые расходы и риск-оценка не подтверждены.</p>
+                <details className="tinvest-details">
+                  <summary>Подробный ответ песочницы</summary>
+                  <pre>{JSON.stringify(estimate.estimate, null, 2)}</pre>
+                </details>
+              </div>
+            )}
           </div>
           <details className="tinvest-details">
             <summary>Показать технические данные портфеля и позиций</summary>
