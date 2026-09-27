@@ -51,9 +51,11 @@ Cancellation remains available to release an existing reservation.
 
 The default database is `data/paper_alpha.sqlite3`. Create and verify consistent
 snapshots with the SQLite online backup utility described in
-[PAPER_DATABASE_BACKUP.md](PAPER_DATABASE_BACKUP.md). Automated migrations,
-retention, encryption, multi-host coordination, and automated restore commands are
-not yet available.
+[PAPER_DATABASE_BACKUP.md](PAPER_DATABASE_BACKUP.md). Startup applies ordered
+SQLite migrations in one transaction, rejects unknown future versions, and checks
+the physical schema contract. The same utility provides an explicit offline restore
+that first preserves the current database. Scheduled retention, encryption,
+multi-host coordination, and unattended restore are not available.
 
 ## API example
 

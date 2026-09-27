@@ -7,24 +7,23 @@ explainable paired depth simulation, persistent SQLite virtual account, exact-on
 paper command idempotency, audit, accounting reconciliation and halted recovery.
 T-Invest remains a sandbox/read-only boundary. No live order implementation exists.
 
-## B. After PR #5 and its stacked foundation PR are merged
+## B. Open Paper Alpha operations PRs
 
-PR #5 contributes only the pure `flat` / `hedge_required` / `halted` residual model;
-it does not execute a hedge. The foundation PR adds checked mark source/freshness,
-immutable simulated leg-event DTOs, deterministic event replay, a non-confirmable
-paper hedge proposal, a read-only saved-journal view, beginner guidance, loopback
-Docker binding, pinned Python CI dependencies, secret hygiene and Docker smoke CI.
-The present durable command still pairs buy/sell fills equally; it does not create
-independent execution groups or automatic hedges.
+PR #9 adds verified, non-overwriting SQLite snapshots. Its stacked migration/restore
+PR adds ordered transactional migrations, strict schema admission, explicit offline
+restore, and preservation of a verified pre-restore recovery snapshot. Neither PR
+changes paper execution or enables an automatic hedge. The present durable command
+still pairs buy/sell fills equally; it does not create independent execution groups.
 
 ## C. Before long-running paper testing
 
 Require green GitHub CI including a real Docker smoke run, deterministic recorded
-market fixtures, failure injection, feed soak metrics, operator backup/restore drill,
-daily equity snapshots, versioned migrations, and a validated least-privilege
-T-Invest sandbox transport. Independent leg events must enter the existing SQLite
-accounting/audit/idempotency transaction before they can represent real paper
-exposure. Do not deploy the unauthenticated mutable paper API publicly.
+market fixtures, feed soak metrics, an operator restore drill in the actual local
+environment, automated daily snapshots with monitored retention, daily equity
+snapshots, and a validated least-privilege T-Invest sandbox transport. Independent
+leg events must enter the existing SQLite accounting/audit/idempotency transaction
+before they can represent real paper exposure. Do not deploy the unauthenticated
+mutable paper API publicly.
 
 ## D. Separate future live admission
 
