@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from quant_trading_platform.persistence import SQLitePaperStore, decimal_text
+from quant_trading_platform.persistence.migrations import SCHEMA_VERSION
 
 
 def test_initialization_seed_and_reopening_are_idempotent(tmp_path: Path) -> None:
@@ -24,7 +25,8 @@ def test_initialization_seed_and_reopening_are_idempotent(tmp_path: Path) -> Non
     with reopened.transaction() as db:
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
         assert db.execute("SELECT typeof(available) FROM paper_balances").fetchone()[0] == "text"
     reopened.close()
 
@@ -147,8 +149,10 @@ def test_databases_are_isolated_and_schema_has_no_real_money_columns(tmp_path: P
     assert second.list_accounts() == []
     with first.transaction() as db:
         tables = db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        assert len(tables) == 8
+        assert len(tables) == 9
         for table in tables:
+            if table[0] == "schema_migrations":
+                continue
             # Table names originate from this test's schema, never user input.
             columns = db.execute(f"PRAGMA table_info({table[0]})").fetchall()
             names = {row[1] for row in columns}
