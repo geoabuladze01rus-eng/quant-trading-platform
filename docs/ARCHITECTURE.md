@@ -34,9 +34,12 @@ public REST books
 SQLite stores accounts, balances, orders, fills, positions, audit events,
 idempotency records, and optional reconciliation snapshots. WAL, foreign keys,
 busy timeout, stable identifiers, a schema version, and exact decimal JSON are
-enabled. Initialization and account seeding are idempotent. A file path provides
-restart recovery; test databases use isolated temporary paths or isolated shared
-memory databases.
+enabled. An ordered migration registry advances the declared schema and its
+physical changes in one transaction; an unknown future version or malformed
+contract fails before WAL/startup writes. Initialization and account seeding are
+idempotent. Verified backup/restore remains an explicit offline operator action,
+not an API endpoint. A file path provides restart recovery; test databases use
+isolated temporary paths or isolated shared memory databases.
 
 Partial execution matches both spread legs to the smaller available depth. Fees
 apply only to executed notional. The remaining quote and base are reserved while

@@ -11,7 +11,12 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
-SCHEMA_VERSION = 1
+from quant_trading_platform.persistence.migrations import (
+    SCHEMA_VERSION,
+    apply_migrations,
+    validate_schema,
+)
+
 _TABLES = {
     "order": "paper_orders", "fill": "paper_fills", "position": "paper_positions",
     "reconciliation": "reconciliation_results", "audit": "audit_events",
@@ -112,45 +117,17 @@ class SQLitePaperStore:
                 yield own
 
     def initialize(self) -> None:
-        with self._connect() as config:
+        migration_connection = self._connect()
+        try:
+            apply_migrations(migration_connection)
+        finally:
+            migration_connection.close()
+        config = self._connect()
+        try:
             config.execute("PRAGMA journal_mode=WAL")
-        config.close()
-        with self.transaction() as conn:
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, SCHEMA_VERSION):
-                raise ValueError(f"Unsupported paper database schema version: {version}")
-            conn.execute("""CREATE TABLE IF NOT EXISTS paper_accounts (
-                id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL,
-                created_at TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 1,
-                updated_at TEXT NOT NULL, correlation_id TEXT NOT NULL DEFAULT '',
-                payload TEXT NOT NULL DEFAULT '{}')""")
-            conn.execute("""CREATE TABLE IF NOT EXISTS paper_balances (
-                account_id TEXT NOT NULL REFERENCES paper_accounts(id), asset TEXT NOT NULL,
-                available TEXT NOT NULL, reserved TEXT NOT NULL, updated_at TEXT NOT NULL,
-                created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
-                correlation_id TEXT NOT NULL DEFAULT '',
-                schema_version INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(account_id, asset))""")
-            for table in _TABLES.values():
-                # Identifiers come exclusively from the fixed module-level allowlist.
-                conn.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
-                    id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES paper_accounts(id),
-                    execution_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '',
-                    created_at TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 1,
-                    updated_at TEXT NOT NULL, correlation_id TEXT NOT NULL DEFAULT '',
-                    payload TEXT NOT NULL)""")
-                conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_account ON {table}(account_id)")
-                conn.execute(
-                    f"CREATE INDEX IF NOT EXISTS {table}_execution ON {table}(execution_id)")
-                conn.execute(
-                    f"CREATE INDEX IF NOT EXISTS {table}_correlation ON {table}(correlation_id)")
-                conn.execute(f"CREATE INDEX IF NOT EXISTS {table}_status ON {table}(status)")
-            conn.execute("""CREATE TABLE IF NOT EXISTS idempotency_records (
-                account_id TEXT NOT NULL REFERENCES paper_accounts(id), key TEXT NOT NULL,
-                request_hash TEXT NOT NULL, status TEXT NOT NULL, response TEXT,
-                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                correlation_id TEXT NOT NULL DEFAULT '',
-                schema_version INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(account_id,key))""")
-            conn.execute("PRAGMA user_version=1")
+            validate_schema(config)
+        finally:
+            config.close()
 
     def close(self) -> None:
         if self._keeper is not None:
@@ -168,8 +145,9 @@ class SQLitePaperStore:
         _identifier(account_id)
         with self._using(conn) as db:
             db.execute("""INSERT OR IGNORE INTO paper_accounts
-                       (id,name,status,created_at,updated_at,payload) VALUES (?,?,?,?,?,?)""",
-                       (account_id, "Paper account", "active", _now(), _now(),
+                       (id,name,status,created_at,schema_version,updated_at,payload)
+                       VALUES (?,?,?,?,?,?,?)""",
+                       (account_id, "Paper account", "active", _now(), SCHEMA_VERSION, _now(),
                         _dump({"initial_balances": seed})))
             for asset, amount in seed.items():
                 _identifier(asset, maximum=32)
@@ -177,8 +155,9 @@ class SQLitePaperStore:
                 if amount < 0:
                     raise ValueError("Seed balance cannot be negative")
                 db.execute("""INSERT OR IGNORE INTO paper_balances
-                    (account_id,asset,available,reserved,updated_at,created_at)
-                    VALUES (?,?,?,?,?,?)""", (account_id, asset, encoded, "0", _now(), _now()))
+                    (account_id,asset,available,reserved,updated_at,created_at,schema_version)
+                    VALUES (?,?,?,?,?,?,?)""", (
+                    account_id, asset, encoded, "0", _now(), _now(), SCHEMA_VERSION))
             result = self.get_account(account_id, conn=db)
             assert result is not None
             return result
@@ -200,14 +179,16 @@ class SQLitePaperStore:
         with self._using(conn) as db:
             existing = self.get_account(account_id, conn=db) or {}
             value = {**existing, **record, "id": account_id}
+            value["schema_version"] = SCHEMA_VERSION
             db.execute("""INSERT INTO paper_accounts
-                (id,name,status,created_at,updated_at,correlation_id,payload) VALUES (?,?,?,?,?,?,?)
+                (id,name,status,created_at,schema_version,updated_at,correlation_id,payload)
+                VALUES (?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET name=excluded.name,status=excluded.status,
-                updated_at=excluded.updated_at,correlation_id=excluded.correlation_id,
-                payload=excluded.payload""", (
+                schema_version=excluded.schema_version,updated_at=excluded.updated_at,
+                correlation_id=excluded.correlation_id,payload=excluded.payload""", (
                 account_id, str(value.get("name", "Paper account")),
                 str(value.get("status", "active")), str(value.get("created_at", _now())),
-                _now(), str(value.get("correlation_id", "")), _dump(value)))
+                SCHEMA_VERSION, _now(), str(value.get("correlation_id", "")), _dump(value)))
             result = self.get_account(account_id, conn=db)
             assert result is not None
             return result
@@ -244,10 +225,13 @@ class SQLitePaperStore:
             raise ValueError("Paper balances cannot be negative")
         with self._using(conn) as db:
             db.execute("""INSERT INTO paper_balances
-                (account_id,asset,available,reserved,updated_at,created_at) VALUES (?,?,?,?,?,?)
+                (account_id,asset,available,reserved,updated_at,created_at,schema_version)
+                VALUES (?,?,?,?,?,?,?)
                 ON CONFLICT(account_id,asset) DO UPDATE SET available=excluded.available,
-                reserved=excluded.reserved,updated_at=excluded.updated_at""",
-                       (account_id, asset, available_text, reserved_text, _now(), _now()))
+                reserved=excluded.reserved,updated_at=excluded.updated_at,
+                schema_version=excluded.schema_version""", (
+                account_id, asset, available_text, reserved_text, _now(), _now(),
+                SCHEMA_VERSION))
 
     def _insert(self, entity: str, record: Mapping[str, object],
                 conn: sqlite3.Connection | None) -> dict[str, Any]:
@@ -267,14 +251,18 @@ class SQLitePaperStore:
         value.update(id=identifier, account_id=account_id,
                      execution_id=str(value.get("execution_id") or ""),
                      status=str(value.get("status") or ""),
-                     created_at=str(value.get("created_at") or _now()), schema_version=1,
+                     created_at=str(value.get("created_at") or _now()),
+                     schema_version=SCHEMA_VERSION,
                      updated_at=str(value.get("updated_at") or _now()),
                      correlation_id=str(value.get("correlation_id") or ""))
         payload = _dump(value)
         with self._using(conn) as db:
-            db.execute(f"INSERT INTO {table} VALUES (?,?,?,?,?,?,?,?,?)", (
+            db.execute(f"""INSERT INTO {table}
+                (id,account_id,execution_id,status,created_at,schema_version,updated_at,
+                 correlation_id,payload) VALUES (?,?,?,?,?,?,?,?,?)""", (
                 identifier, account_id, value["execution_id"], value["status"],
-                value["created_at"], 1, value["updated_at"], value["correlation_id"], payload))
+                value["created_at"], SCHEMA_VERSION, value["updated_at"],
+                value["correlation_id"], payload))
         return dict(json.loads(payload))
 
     def _get(self, entity: str, identifier: str, conn: sqlite3.Connection | None
@@ -318,10 +306,10 @@ class SQLitePaperStore:
         _identifier(request_hash)
         with self._using(conn) as db:
             cursor = db.execute("""INSERT INTO idempotency_records
-                (account_id,key,request_hash,status,response,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?)
+                (account_id,key,request_hash,status,response,created_at,updated_at,schema_version)
+                VALUES (?,?,?,?,?,?,?,?)
                 ON CONFLICT(account_id,key) DO NOTHING""",
-                (account_id, key, request_hash, "pending", None, _now(), _now()))
+                (account_id, key, request_hash, "pending", None, _now(), _now(), SCHEMA_VERSION))
             return cursor.rowcount == 1
 
     def complete_idempotency(self, account_id: str, key: str, response: Mapping[str, object], *,
@@ -330,8 +318,9 @@ class SQLitePaperStore:
         _identifier(key, maximum=128)
         with self._using(conn) as db:
             cursor = db.execute("""UPDATE idempotency_records SET status='completed',response=?,
-                updated_at=? WHERE account_id=? AND key=? AND status='pending'""",
-                (_dump(response), _now(), account_id, key))
+                schema_version=?,updated_at=?
+                WHERE account_id=? AND key=? AND status='pending'""",
+                (_dump(response), SCHEMA_VERSION, _now(), account_id, key))
             if cursor.rowcount != 1:
                 raise ValueError("Idempotency reservation missing or already completed")
 
@@ -410,9 +399,9 @@ class SQLitePaperStore:
             value["updated_at"] = _now()
             payload = _dump(value)
             db.execute(f"""UPDATE {_TABLES[entity]} SET execution_id=?,status=?,payload=?,
-                       updated_at=?,correlation_id=? WHERE id=?""",
+                       schema_version=?,updated_at=?,correlation_id=? WHERE id=?""",
                        (value["execution_id"], value["status"], payload,
-                        value["updated_at"], value["correlation_id"], identifier))
+                        SCHEMA_VERSION, value["updated_at"], value["correlation_id"], identifier))
             return dict(json.loads(payload))
 
     def update_order(self, record: Mapping[str, object], *,
