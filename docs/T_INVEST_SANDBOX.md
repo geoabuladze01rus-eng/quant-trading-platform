@@ -9,14 +9,14 @@ must be used together. Never configure a production token or production host her
 
 The connector is wired to local read-only endpoints for sandbox status, accounts,
 portfolio, positions, and orders. These endpoints do not submit or cancel orders.
-The browser interface and any sandbox order workflow remain separate work.
+A read-only GET order-price estimate is also available. It queries the sandbox\nprovider for a one-lot limit-order estimate, but does not place, approve, or reserve\nan order. The browser order workflow remains separate work.
 
 ## Current guardrails
 
 - The HTTP base URL is fixed to `https://sandbox-invest-public-api.tbank.ru`.
 - Only an explicit `SandboxService` method allowlist is accepted. Production
   `OrdersService` calls are rejected before a request is sent.
-- Account reads require paper mode, sandbox mode, a configured token, and live
+- Account reads and order-price estimates require paper mode, sandbox mode, a configured token, and live
   trading disabled.
 - Sandbox limit orders require the separate
   `T_INVEST_SANDBOX_ORDERS_ENABLED=true` setting. It defaults to false.
@@ -45,12 +45,12 @@ origins, but Origin checks are not authentication.
 ## Remaining work before personal demo-account testing
 
 - Add a clear UI label for the selected sandbox account and virtual balances.
-- Add a review/preview/explicit-confirmation sequence for a one-lot limit order.
+- Connect a clear one-lot estimate preview to the UI. A provider estimate is not\n  a risk decision or evidence of market-data freshness, and must never be shown\n  as approval or guaranteed cost.\n- Add a separate review/explicit-confirmation sequence for any future order.
 - Persist idempotency keys and sandbox responses in the audit trail; reconcile order state.
 - Add local authentication before any mutable sandbox controls are exposed.
 - Run mocked tests and CI, then a user-observed integration check using only a
   sandbox token and sandbox account.
 
-References: [T-Invest sandbox](https://developer.tbank.ru/invest/intro/developer/sandbox),
+References: [GetSandboxOrderPrice](https://developer.tbank.ru/invest/api/sandbox-service-get-sandbox-order-price),\n[T-Invest sandbox](https://developer.tbank.ru/invest/intro/developer/sandbox),
 [PostSandboxOrder](https://developer.tbank.ru/invest/api/sandbox-service-post-sandbox-order),
 [API token types](https://developer.tbank.ru/invest/intro/intro/token).
