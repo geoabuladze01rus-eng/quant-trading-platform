@@ -41,7 +41,9 @@ def test_transport_is_pinned_to_sandbox_and_posts_only_allowlisted_service_metho
     assert client.get_accounts() == [{"id": "sandbox-1"}]
     assert seen[0].url.host == "sandbox-invest-public-api.tbank.ru"
     assert str(seen[0].url).startswith(SANDBOX_BASE_URL)
-    assert seen[0].url.path.endswith("/SandboxService/GetSandboxAccounts")
+    assert seen[0].url.path.endswith(
+        "/rest/tinkoff.public.invest.api.contract.v1.SandboxService/GetSandboxAccounts"
+    )
     assert seen[0].headers["Authorization"] == "Bearer fixture-token"
     transport.close()
 
