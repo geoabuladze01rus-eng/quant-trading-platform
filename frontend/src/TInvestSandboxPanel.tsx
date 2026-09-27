@@ -174,7 +174,7 @@ export function TInvestSandboxPanel() {
     if (!selectedAccount || !status?.ready || !data) return;
     clearEstimate();
     const requestId = estimateRequest.current;
-    if (!instrumentId.trim() || !/^(?:0|[1-9]\\d*)(?:\\.\\d{1,9})?$/.test(limitPrice.trim()) ||
+    if (!instrumentId.trim() || !/^(?:0|[1-9]\d*)(?:\.\d{1,9})?$/.test(limitPrice.trim()) ||
         Number(limitPrice) <= 0) {
       setEstimateError('Укажите идентификатор инструмента и положительную цену (до 9 знаков после запятой).');
       return;
