@@ -96,8 +96,8 @@ def sandbox_accounts(request: Request) -> dict[str, object]:
     for account in accounts:
         # GetSandboxAccounts returns GetAccountsResponse; Account uses "id".
         account_id = account.get("id")
-        if not isinstance(account_id, str) or not account_id:
-            continue
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise HTTPException(502, "Invalid T-Invest sandbox account response")
         if configured_id and account_id != configured_id:
             continue
         status = account.get("status")
