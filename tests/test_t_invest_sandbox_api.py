@@ -72,6 +72,7 @@ async def test_status_is_safe_and_does_not_expose_token(
         "ready": True,
         "account_configured": False,
         "orders_enabled": False,
+        "order_submission_available": False,
         "max_order_lots": 1,
         "live_trading": "locked",
         "live_execution": False,
@@ -147,3 +148,14 @@ async def test_sandbox_route_does_not_leak_transport_errors(
         response = await session.get("/t-invest/sandbox/accounts")
     assert response.status_code == 409
     assert "do-not-leak" not in response.text
+
+
+
+def test_t_invest_sandbox_api_exposes_only_read_routes() -> None:
+    routes = [
+        route
+        for route in api.app.routes
+        if getattr(route, "path", "").startswith("/t-invest/sandbox/")
+    ]
+    assert routes
+    assert all(route.methods == {"GET"} for route in routes)
