@@ -144,7 +144,11 @@ class TInvestSandboxClient:
             raise ValueError("instrument_id is required")
         if direction not in ("ORDER_DIRECTION_BUY", "ORDER_DIRECTION_SELL"):
             raise ValueError("direction must be a buy or sell sandbox order")
-        if type(quantity_lots) is not int or not 1 <= quantity_lots <= self.settings.t_invest_sandbox_max_lots:
+        within_lot_limit = (
+            type(quantity_lots) is int
+            and 1 <= quantity_lots <= self.settings.t_invest_sandbox_max_lots
+        )
+        if not within_lot_limit:
             raise ValueError("quantity_lots exceeds the configured sandbox limit")
         if not isinstance(limit_price, Decimal) or not limit_price.is_finite() or limit_price <= 0:
             raise ValueError("limit_price must be a positive finite Decimal")
