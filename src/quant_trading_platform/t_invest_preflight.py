@@ -56,8 +56,8 @@ def evaluate(
         accounts = probe()
         if not all(
             isinstance(row, dict)
-            and isinstance(row.get("id"), str)
-            and bool(row["id"].strip())
+            and isinstance(identifier := row.get("id"), str)
+            and bool(identifier.strip())
             for row in accounts
         ):
             raise ValueError("Invalid sandbox account response")
