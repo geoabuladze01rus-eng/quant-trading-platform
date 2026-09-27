@@ -94,7 +94,8 @@ def sandbox_accounts(request: Request) -> dict[str, object]:
     configured_id = config.t_invest_account_id
     rows: list[dict[str, object]] = []
     for account in accounts:
-        account_id = account.get("accountId")
+        # GetSandboxAccounts returns GetAccountsResponse; Account uses "id".
+        account_id = account.get("id")
         if not isinstance(account_id, str) or not account_id:
             continue
         if configured_id and account_id != configured_id:
