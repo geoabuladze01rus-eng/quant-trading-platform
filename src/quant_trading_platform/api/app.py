@@ -13,8 +13,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from quant_trading_platform.audit_log import AuditLog, PersistentAuditLog
 from quant_trading_platform.api.t_invest_sandbox import router as t_invest_sandbox_router
+from quant_trading_platform.audit_log import AuditLog, PersistentAuditLog
 from quant_trading_platform.config import MarketScope, Settings, TradingMode
 from quant_trading_platform.connectors.crypto import BinanceConnector, BybitConnector, OKXConnector
 from quant_trading_platform.connectors.t_invest.sandbox import (
