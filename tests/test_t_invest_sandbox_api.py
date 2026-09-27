@@ -26,6 +26,8 @@ class FakeTransport:
             return {"accountId": "sandbox-1", "positions": []}
         if method == "GetSandboxOrders":
             return {"orders": []}
+        if method == "GetSandboxOrderPrice":
+            return {"totalOrderAmount": {"units": "123"}, "accessToken": "hidden"}
         raise AssertionError(f"Unexpected method: {method}")
 
 
@@ -159,3 +161,86 @@ def test_t_invest_sandbox_api_exposes_only_read_routes() -> None:
     }
     assert paths
     assert all(set(methods) == {"get"} for methods in paths.values())
+
+
+@pytest.mark.asyncio
+async def test_price_preview_is_estimate_only_and_never_posts_order(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = FakeTransport()
+    config = Settings(_env_file=None, t_invest_api_token="sandbox-test-token")
+    monkeypatch.setattr(
+        api.state, "t_invest_sandbox_client",
+        TInvestSandboxClient(config, transport),
+    )
+    response = await client.get(
+        "/t-invest/sandbox/accounts/sandbox-1/order-price",
+        params={
+            "instrument_id": "SBER_TQBR",
+            "direction": "ORDER_DIRECTION_BUY",
+            "quantity_lots": 1,
+            "limit_price": "123.45",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "environment": "sandbox",
+        "status": "estimate_only",
+        "approved": False,
+        "order_submission_available": False,
+        "reason": "provider_estimate_is_not_risk_approval",
+        "estimate": {"totalOrderAmount": {"units": "123"}},
+    }
+    assert transport.calls == [(
+        "GetSandboxOrderPrice",
+        {
+            "accountId": "sandbox-1",
+            "instrumentId": "SBER_TQBR",
+            "direction": "ORDER_DIRECTION_BUY",
+            "quantity": "1",
+            "price": {"units": "123", "nano": 450_000_000},
+        },
+    )]
+    assert "hidden" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_price_preview_rejects_over_limit_without_provider_call(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = FakeTransport()
+    config = Settings(_env_file=None, t_invest_api_token="sandbox-test-token")
+    monkeypatch.setattr(
+        api.state, "t_invest_sandbox_client",
+        TInvestSandboxClient(config, transport),
+    )
+    response = await client.get(
+        "/t-invest/sandbox/accounts/sandbox-1/order-price",
+        params={
+            "instrument_id": "SBER_TQBR",
+            "direction": "ORDER_DIRECTION_BUY",
+            "quantity_lots": 2,
+            "limit_price": "123.45",
+        },
+    )
+    assert response.status_code == 422
+    assert transport.calls == []
+
+
+@pytest.mark.asyncio
+async def test_price_preview_rejects_foreign_origin(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get(
+        "/t-invest/sandbox/accounts/sandbox-1/order-price",
+        params={
+            "instrument_id": "SBER_TQBR",
+            "direction": "ORDER_DIRECTION_BUY",
+            "quantity_lots": 1,
+            "limit_price": "123.45",
+        },
+        headers={"Origin": "https://untrusted.example"},
+    )
+    assert response.status_code == 403

@@ -9,14 +9,16 @@ must be used together. Never configure a production token or production host her
 
 The connector is wired to local read-only endpoints for sandbox status, accounts,
 portfolio, positions, and orders. These endpoints do not submit or cancel orders.
-The browser interface and any sandbox order workflow remain separate work.
+A read-only GET order-price estimate is also available. It queries the sandbox
+provider for a one-lot limit-order estimate, but does not place, approve, or reserve
+an order. The browser can display this estimate, but it cannot submit or cancel orders.
 
 ## Current guardrails
 
 - The HTTP base URL is fixed to `https://sandbox-invest-public-api.tbank.ru`.
 - Only an explicit `SandboxService` method allowlist is accepted. Production
   `OrdersService` calls are rejected before a request is sent.
-- Account reads require paper mode, sandbox mode, a configured token, and live
+- Account reads and order-price estimates require paper mode, sandbox mode, a configured token, and live
   trading disabled.
 - Sandbox limit orders require the separate
   `T_INVEST_SANDBOX_ORDERS_ENABLED=true` setting. It defaults to false.
@@ -42,15 +44,46 @@ The API has no user authentication. Run it only on loopback; never expose it to 
 LAN, reverse proxy, or public internet. The routes reject unexpected browser
 origins, but Origin checks are not authentication.
 
-## Remaining work before personal demo-account testing
+## Try the read-only demo locally
 
-- Add a clear UI label for the selected sandbox account and virtual balances.
-- Add a review/preview/explicit-confirmation sequence for a one-lot limit order.
+Use this integration branch after reviewing its ancestor PRs. From the repository
+root, create a local ignored `.env` with only a sandbox token and these safe
+settings (never commit the file or share the token):
+
+```dotenv
+TRADING_MODE=paper
+T_INVEST_SANDBOX=true
+LIVE_TRADING_ENABLED=false
+T_INVEST_SANDBOX_ORDERS_ENABLED=false
+T_INVEST_API_TOKEN=
+```
+
+Fill the empty token value only in your private `.env`. Run the backend bound
+to `127.0.0.1`, then run the frontend with
+`VITE_API_BASE_URL=http://127.0.0.1:8000` as described in README.
+Check `/t-invest/sandbox/status` first. In the demo-account panel, load
+accounts, select one, open the portfolio, and enter a sandbox instrument UID
+(or ticker_classcode) and a positive limit price to view a one-lot estimate.
+No order should be sent; the result must be labelled "estimate only" and
+must never show risk approval. If no sandbox account is returned, stop and
+follow the provider's sandbox-account setup instructions. Do not paste the
+token into the browser or logs.
+
+This procedure has not been run with a real sandbox token in CI.
+Origin checks do not authenticate local API callers: do not bind to a LAN
+interface or expose the port through a proxy.
+
+## Remaining work before sandbox order submission
+
+- Verify the integrated UI and API against a personal sandbox-only account. A
+  provider estimate is not a risk decision or evidence of market-data freshness.
+- Add a separate review/explicit-confirmation sequence for any future order.
 - Persist idempotency keys and sandbox responses in the audit trail; reconcile order state.
 - Add local authentication before any mutable sandbox controls are exposed.
 - Run mocked tests and CI, then a user-observed integration check using only a
   sandbox token and sandbox account.
 
-References: [T-Invest sandbox](https://developer.tbank.ru/invest/intro/developer/sandbox),
+References: [GetSandboxOrderPrice](https://developer.tbank.ru/invest/api/sandbox-service-get-sandbox-order-price),
+[T-Invest sandbox](https://developer.tbank.ru/invest/intro/developer/sandbox),
 [PostSandboxOrder](https://developer.tbank.ru/invest/api/sandbox-service-post-sandbox-order),
 [API token types](https://developer.tbank.ru/invest/intro/intro/token).

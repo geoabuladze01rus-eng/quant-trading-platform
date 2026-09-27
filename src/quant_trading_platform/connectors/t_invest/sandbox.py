@@ -19,6 +19,7 @@ SANDBOX_METHODS = frozenset({
     "GetSandboxPositions",
     "GetSandboxOrders",
     "GetSandboxOrderState",
+    "GetSandboxOrderPrice",
     "PostSandboxOrder",
     "CancelSandboxOrder",
 })
@@ -125,7 +126,7 @@ class TInvestSandboxClient:
     def get_orders(self, account_id: str) -> dict[str, object]:
         return self._call("GetSandboxOrders", {"accountId": self._account(account_id)})
 
-    def place_limit_order(
+    def _limit_order_parameters(
         self,
         *,
         account_id: str,
@@ -133,11 +134,7 @@ class TInvestSandboxClient:
         direction: str,
         quantity_lots: int,
         limit_price: Decimal,
-        request_id: str | None = None,
     ) -> dict[str, object]:
-        self._assert_ready()
-        if not self.settings.t_invest_sandbox_orders_enabled:
-            raise TInvestSafetyError("T-Invest sandbox order gate is disabled")
         account = self._account(account_id)
         instrument = instrument_id.strip()
         if not instrument:
@@ -156,18 +153,58 @@ class TInvestSandboxClient:
         if nano_price != nano_price.to_integral_value():
             raise ValueError("limit_price supports at most 9 decimal places")
         units, nano = divmod(int(nano_price), 1_000_000_000)
+        return {
+            "accountId": account,
+            "instrumentId": instrument,
+            "direction": direction,
+            "quantity": str(quantity_lots),
+            "price": {"units": str(units), "nano": nano},
+        }
+
+    def get_order_price(
+        self,
+        *,
+        account_id: str,
+        instrument_id: str,
+        direction: str,
+        quantity_lots: int,
+        limit_price: Decimal,
+    ) -> dict[str, object]:
+        """Read a sandbox price estimate without enabling or placing orders."""
+        self._assert_ready()
+        parameters = self._limit_order_parameters(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            direction=direction,
+            quantity_lots=quantity_lots,
+            limit_price=limit_price,
+        )
+        return self._call("GetSandboxOrderPrice", parameters)
+
+    def place_limit_order(
+        self,
+        *,
+        account_id: str,
+        instrument_id: str,
+        direction: str,
+        quantity_lots: int,
+        limit_price: Decimal,
+        request_id: str | None = None,
+    ) -> dict[str, object]:
+        self._assert_ready()
+        if not self.settings.t_invest_sandbox_orders_enabled:
+            raise TInvestSafetyError("T-Invest sandbox order gate is disabled")
+        parameters = self._limit_order_parameters(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            direction=direction,
+            quantity_lots=quantity_lots,
+            limit_price=limit_price,
+        )
         order_id = str(UUID(request_id)) if request_id is not None else str(uuid4())
         return self._call(
             "PostSandboxOrder",
-            {
-                "accountId": account,
-                "instrumentId": instrument,
-                "direction": direction,
-                "quantity": str(quantity_lots),
-                "price": {"units": str(units), "nano": nano},
-                "orderType": "ORDER_TYPE_LIMIT",
-                "orderId": order_id,
-            },
+            {**parameters, "orderType": "ORDER_TYPE_LIMIT", "orderId": order_id},
         )
 
     def cancel_order(self, *, account_id: str, order_id: str) -> dict[str, object]:

@@ -70,8 +70,10 @@ partial-fill, recovery, and limitation details.
 FastAPI lifespan starts independent public REST pollers for Binance, Bybit and OKX.
 No trading keys are required. `/venues` distinguishes `no_data`, `stale`, `error`,
 and `disabled`; only fresh normalized books can reach the paper engine. T-Invest sandbox status, account, portfolio, position, and order reads are
-available through local read-only endpoints. Sandbox order submission is not
-exposed through the API or browser; see [T-Invest sandbox](docs/T_INVEST_SANDBOX.md).
+available through local read-only endpoints. The integrated light dashboard can
+also request a one-lot sandbox cost estimate; it does not submit or approve
+an order. Sandbox order submission is not exposed through the API or browser;
+see [T-Invest sandbox](docs/T_INVEST_SANDBOX.md).
 
 ```bash
 docker compose up --build
