@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from uuid import uuid4
 
@@ -183,3 +184,93 @@ def test_http_errors_are_sanitized_and_do_not_echo_api_token() -> None:
         transport.call("GetSandboxAccounts", {})
     assert secret not in str(error.value)
     transport.close()
+
+
+def test_sandbox_price_preview_never_posts_order_even_with_order_gate_off() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"totalOrderAmount": {"units": "123"}})
+
+    transport = TInvestSandboxTransport(
+        "fixture-token", transport=httpx.MockTransport(handler)
+    )
+    client = TInvestSandboxClient(settings(), transport)
+    estimate = client.get_order_price(
+        account_id="sandbox-1",
+        instrument_id="SBER_TQBR",
+        direction="ORDER_DIRECTION_BUY",
+        quantity_lots=1,
+        limit_price=Decimal("123.45"),
+    )
+    assert estimate["totalOrderAmount"] == {"units": "123"}
+    assert len(seen) == 1
+    assert seen[0].url.host == "sandbox-invest-public-api.tbank.ru"
+    assert seen[0].url.path.endswith("/SandboxService/GetSandboxOrderPrice")
+    assert seen[0].method == "POST"
+    assert json.loads(seen[0].content) == {
+        "accountId": "sandbox-1",
+        "instrumentId": "SBER_TQBR",
+        "direction": "ORDER_DIRECTION_BUY",
+        "quantity": "1",
+        "price": {"units": "123", "nano": 450_000_000},
+    }
+    transport.close()
+
+
+@pytest.mark.parametrize(
+    ("changes", "error"),
+    [
+        ({"account_id": "other"}, TInvestSafetyError),
+        ({"instrument_id": " "}, ValueError),
+        ({"direction": "ORDER_DIRECTION_UNSPECIFIED"}, ValueError),
+        ({"quantity_lots": 2}, ValueError),
+        ({"limit_price": Decimal("NaN")}, ValueError),
+        ({"limit_price": Decimal("0")}, ValueError),
+        ({"limit_price": Decimal("0.0000000001")}, ValueError),
+    ],
+)
+def test_price_preview_rejects_invalid_inputs_before_transport(
+    changes: dict[str, object], error: type[Exception]
+) -> None:
+    transport = FixtureTransport()
+    client = TInvestSandboxClient(
+        settings(t_invest_account_id="sandbox-1", t_invest_sandbox_max_lots=1),
+        transport,
+    )
+    values: dict[str, object] = {
+        "account_id": "sandbox-1",
+        "instrument_id": "SBER_TQBR",
+        "direction": "ORDER_DIRECTION_BUY",
+        "quantity_lots": 1,
+        "limit_price": Decimal("100"),
+    }
+    values.update(changes)
+    with pytest.raises(error):
+        client.get_order_price(**values)  # type: ignore[arg-type]
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"t_invest_sandbox": False},
+        {"trading_mode": TradingMode.LIVE},
+        {"live_trading_enabled": True},
+    ],
+)
+def test_price_preview_fails_closed_in_unsafe_modes(
+    overrides: dict[str, object],
+) -> None:
+    transport = FixtureTransport()
+    client = TInvestSandboxClient(settings(**overrides), transport)
+    with pytest.raises(TInvestSafetyError):
+        client.get_order_price(
+            account_id="sandbox-1",
+            instrument_id="SBER_TQBR",
+            direction="ORDER_DIRECTION_BUY",
+            quantity_lots=1,
+            limit_price=Decimal("100"),
+        )
+    assert transport.calls == []
