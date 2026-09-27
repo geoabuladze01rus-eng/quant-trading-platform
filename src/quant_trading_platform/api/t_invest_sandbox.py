@@ -40,7 +40,10 @@ def _safe_payload(value: Any) -> Any:
         return {
             str(key): _safe_payload(item)
             for key, item in value.items()
-            if not any(secret in str(key).lower() for secret in ("token", "secret", "authorization"))
+            if not any(
+                secret in str(key).lower()
+                for secret in ("token", "secret", "authorization")
+            )
         }
     if isinstance(value, list):
         return [_safe_payload(item) for item in value]
