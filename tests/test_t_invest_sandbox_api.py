@@ -17,8 +17,8 @@ class FakeTransport:
         self.calls.append((method, parameters))
         if method == "GetSandboxAccounts":
             return {"accounts": [
-                {"accountId": "sandbox-1", "status": "ACCOUNT_STATUS_OPEN", "token": "hidden"},
-                {"accountId": "sandbox-2", "status": "ACCOUNT_STATUS_OPEN"},
+                {"id": "sandbox-1", "status": "ACCOUNT_STATUS_OPEN", "token": "hidden"},
+                {"id": "sandbox-2", "status": "ACCOUNT_STATUS_OPEN"},
             ]}
         if method == "GetSandboxPortfolio":
             return {"accountId": "sandbox-1", "positions": [], "accessToken": "hidden"}
@@ -244,3 +244,24 @@ async def test_price_preview_rejects_foreign_origin(
         headers={"Origin": "https://untrusted.example"},
     )
     assert response.status_code == 403
+
+
+class MalformedAccountsTransport:
+    def call(self, method: str, parameters: dict[str, object]) -> dict[str, object]:
+        assert method == "GetSandboxAccounts"
+        return {"accounts": [{"accountId": "sandbox-1", "status": "ACCOUNT_STATUS_OPEN"}]}
+
+
+@pytest.mark.asyncio
+async def test_accounts_reject_unexpected_provider_id_shape(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = Settings(_env_file=None, t_invest_api_token="sandbox-test-token")
+    monkeypatch.setattr(
+        api.state, "t_invest_sandbox_client",
+        TInvestSandboxClient(config, MalformedAccountsTransport()),
+    )
+    response = await client.get("/t-invest/sandbox/accounts")
+    assert response.status_code == 502
+    assert "sandbox-1" not in response.text

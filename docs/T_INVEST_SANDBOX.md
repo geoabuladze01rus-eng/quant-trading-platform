@@ -3,6 +3,10 @@
 ## Purpose
 
 The platform will first be tried against a dedicated T-Invest API sandbox account.
+This is an API-only test account; the bank documents sandbox accounts as separate
+from real brokerage accounts. Do not assume a sandbox balance or request will
+appear inside the ordinary T-Invest trading terminal. Verify with the provider
+before describing this as a terminal demo account.
 The sandbox is a separate simulated environment; T-Bank documents it as not changing
 real account positions or balances. The sandbox token and sandbox service methods
 must be used together. Never configure a production token or production host here.
@@ -61,6 +65,20 @@ T_INVEST_API_TOKEN=
 Fill the empty token value only in your private `.env`. Run the backend bound
 to `127.0.0.1`, then run the frontend with
 `VITE_API_BASE_URL=http://127.0.0.1:8000` as described in README.
+Before starting the UI, from the repository root run:
+
+```bash
+python -m quant_trading_platform.t_invest_preflight
+python -m quant_trading_platform.t_invest_preflight --check-accounts
+```
+
+The first command checks local safety settings without network access.
+Only the second one calls the sandbox `GetSandboxAccounts` read method.
+Output contains no token or account identifiers. `configuration_only` does
+not prove that your token works. If you see `no_sandbox_accounts`, stop and
+create an API sandbox account using the provider's documented procedure;
+this platform does not create or fund sandbox accounts.
+
 Check `/t-invest/sandbox/status` first. In the demo-account panel, load
 accounts, select one, open the portfolio, and enter a sandbox instrument UID
 (or ticker_classcode) and a positive limit price to view a one-lot estimate.
