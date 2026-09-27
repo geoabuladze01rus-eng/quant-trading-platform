@@ -7,9 +7,9 @@ The sandbox is a separate simulated environment; T-Bank documents it as not chan
 real account positions or balances. The sandbox token and sandbox service methods
 must be used together. Never configure a production token or production host here.
 
-The connector in this change is a backend foundation. It is not yet wired into a
-browser endpoint or a user-facing order form. That integration must be reviewed and
-tested separately before the user can operate it from the interface.
+The connector is wired to local read-only endpoints for sandbox status, accounts,
+portfolio, positions, and orders. These endpoints do not submit or cancel orders.
+The browser interface and any sandbox order workflow remain separate work.
 
 ## Current guardrails
 
@@ -38,15 +38,16 @@ tested separately before the user can operate it from the interface.
 5. Configure the sandbox account ID only after retrieving it through the sandbox
    account list.
 
-The application should be exposed only on loopback while its mutable local paper
-and sandbox controls remain unauthenticated.
+The API has no user authentication. Run it only on loopback; never expose it to a
+LAN, reverse proxy, or public internet. The routes reject unexpected browser
+origins, but Origin checks are not authentication.
 
 ## Remaining work before personal demo-account testing
 
-- Wire the backend client into an authenticated local-only API.
 - Add a clear UI label for the selected sandbox account and virtual balances.
 - Add a review/preview/explicit-confirmation sequence for a one-lot limit order.
-- Persist request IDs and sandbox responses in the audit trail; reconcile order state.
+- Persist idempotency keys and sandbox responses in the audit trail; reconcile order state.
+- Add local authentication before any mutable sandbox controls are exposed.
 - Run mocked tests and CI, then a user-observed integration check using only a
   sandbox token and sandbox account.
 
