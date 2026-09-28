@@ -40,8 +40,14 @@ async def test_dashboard_endpoints_are_available_and_safe(client: httpx.AsyncCli
     assert (await client.get("/health")).json()["live_trading"] == "locked"
     assert (await client.get("/settings")).json()["trading_mode"] == "paper"
     venues = (await client.get("/venues")).json()
-    assert len(venues) == 4
+    assert len(venues) == 10
     assert all(venue["live_execution"] is False for venue in venues)
+    crypto = [venue for venue in venues if venue["market"] == "crypto"]
+    assert {(venue["name"], venue["symbol"]) for venue in crypto} == {
+        (name, symbol)
+        for name in ("binance", "bybit", "okx")
+        for symbol in ("BTC/USDT", "ETH/USDT", "LTC/USDT")
+    }
     assert (await client.get("/risk")).json()["live_trading_locked"] is True
     response = await client.get("/opportunities")
     assert response.status_code == 200

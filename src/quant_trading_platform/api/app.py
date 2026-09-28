@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from quant_trading_platform.audit_log import AuditLog, PersistentAuditLog
 from quant_trading_platform.config import MarketScope, Settings, TradingMode
 from quant_trading_platform.connectors.crypto import BinanceConnector, BybitConnector, OKXConnector
+from quant_trading_platform.crypto_universe import SUPPORTED_CRYPTO_SPOT_SYMBOLS
 from quant_trading_platform.explainability import explain_opportunity, explain_paper_execution
 from quant_trading_platform.explainability.reasons import human_reason
 from quant_trading_platform.market_data.models import NormalizedOrderBook
@@ -33,6 +34,7 @@ from quant_trading_platform.paper_trading.residual_exposure import (
     PaperLegEvent,
     assess_leg_events,
 )
+from quant_trading_platform.paper_trading.robot import CryptoPaperRobot
 from quant_trading_platform.paper_trading.service import PersistentPaperService
 from quant_trading_platform.persistence import SQLitePaperStore
 from quant_trading_platform.risk import RiskDecision, RiskEngine, RiskLimits
@@ -50,6 +52,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "USDT": settings.paper_initial_usdt,
             "BTC": settings.paper_initial_btc,
             "ETH": settings.paper_initial_eth,
+            "LTC": settings.paper_initial_ltc,
         },
     )
     app.state.paper_store = paper_store
@@ -57,15 +60,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.persistent_audit = PersistentAuditLog(paper_store)
     # A durable paper account must pass accounting reconciliation before new commands.
     app.state.paper_recovery = app.state.paper_service.recover(settings.paper_account_id)
+    app.state.crypto_paper_robot = CryptoPaperRobot(
+        settings, app.state.paper_service, app.state.persistent_audit
+    )
     service = None
     if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
         service = MarketDataService(
             [BinanceConnector(settings), BybitConnector(settings), OKXConnector(settings)],
             _QUOTE_CACHE,
-            symbol=settings.market_data_symbol,
+            symbol=settings.market_data_symbols,
             interval_seconds=settings.market_data_poll_interval_seconds,
             max_age_ms=settings.max_market_data_age_ms,
-            on_update=record_detected_opportunities,
+            on_update=process_market_update,
+            require_instrument_rules=True,
         )
     app.state.market_data = service
     try:
@@ -82,6 +89,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.persistent_audit = None
         app.state.paper_recovery = None
         app.state.paper_store = None
+        app.state.crypto_paper_robot = None
         paper_store.close()
 
 
@@ -123,6 +131,8 @@ def get_settings() -> dict[str, object]:
         "max_trade_notional_usd": settings.max_trade_notional_usd,
         "min_expected_net_pct": settings.min_expected_net_pct,
         "max_market_data_age_ms": settings.max_market_data_age_ms,
+        "crypto_paper_robot_enabled": settings.crypto_paper_robot_enabled,
+        "crypto_paper_robot_primary_venue": settings.crypto_paper_robot_primary_venue.value,
     }
 
 
@@ -137,10 +147,12 @@ def venues() -> list[dict[str, object]]:
         {
             "name": venue, "market": "crypto", "status": "disabled" if disabled else "no_data",
             "mode": "disabled" if disabled else "public_read_only", "live_execution": False,
-            "symbol": settings.market_data_symbol, "data_age_ms": None, "error": None,
+            "symbol": symbol, "data_age_ms": None, "error": None,
             "bid": None, "ask": None, "timestamp_source": None,
             "depth_status": "unavailable", "bid_levels": 0, "ask_levels": 0,
-        } for venue in ("binance", "bybit", "okx")
+        }
+        for symbol in SUPPORTED_CRYPTO_SPOT_SYMBOLS
+        for venue in ("binance", "bybit", "okx")
     ]
     return [*crypto, {
             "name": "t_invest",
@@ -236,9 +248,18 @@ def record_detected_opportunities() -> None:
     assert isinstance(candidates, list)
     for candidate in candidates:
         key = (candidate["symbol"], candidate["buy_venue"], candidate["sell_venue"])
-        if _LAST_SIGNALS.get(key) == candidate["id"]:
+        # Depth timestamps change on every poll. Persist one representative decision
+        # per route/reason/minute instead of flooding the durable audit database.
+        audit_signature = repr(
+            (
+                now_ms() // 60_000,
+                candidate["approved"],
+                candidate["reason_code"],
+            )
+        )
+        if _LAST_SIGNALS.get(key) == audit_signature:
             continue
-        _LAST_SIGNALS[key] = candidate["id"]
+        _LAST_SIGNALS[key] = audit_signature
         for event in (
             "opportunity_detected", "risk_approved" if candidate["approved"] else "risk_rejected",
         ):
@@ -255,6 +276,7 @@ def record_detected_opportunities() -> None:
                 persistent.record(
                     event,
                     str(candidate["reason_code"]),
+                    account_id=settings.paper_account_id,
                     actor="market_data_producer",
                     actor_type="system",
                     strategy=str(candidate["strategy"]),
@@ -272,6 +294,36 @@ def record_detected_opportunities() -> None:
                     correlation_id=str(candidate["id"]),
                     algorithm_version=settings.paper_algorithm_version,
                 )
+
+
+def process_market_update() -> None:
+    """Producer callback: audit signals, then optionally run the local paper coordinator."""
+    record_detected_opportunities()
+    robot: CryptoPaperRobot | None = getattr(app.state, "crypto_paper_robot", None)
+    market_data: MarketDataService | None = getattr(app.state, "market_data", None)
+    if robot is not None and market_data is not None:
+        robot.run_once(market_data)
+
+
+@app.get("/crypto/paper-robot")
+def crypto_paper_robot_status() -> dict[str, object]:
+    robot: CryptoPaperRobot | None = getattr(app.state, "crypto_paper_robot", None)
+    if robot is None:
+        return {
+            "state": "unavailable",
+            "reason_code": "source_unavailable",
+            "enabled": False,
+            "paper_only": True,
+            "live_execution": False,
+            "primary_venue": settings.crypto_paper_robot_primary_venue.value,
+            "strategy": "bybit_anchored_cross_venue_spread",
+            "symbols": list(SUPPORTED_CRYPTO_SPOT_SYMBOLS),
+            "last_signal": None,
+            "last_result": None,
+        }
+    result = robot.snapshot()
+    result["human_reason"] = human_reason(str(result["reason_code"]))
+    return result
 
 
 class PaperSimulationRequest(BaseModel):

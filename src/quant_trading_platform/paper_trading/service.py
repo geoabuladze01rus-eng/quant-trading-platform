@@ -9,6 +9,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from quant_trading_platform.config import Settings
+from quant_trading_platform.crypto_universe import crypto_spot_pair
 from quant_trading_platform.explainability.reasons import (
     canonical_reason_code,
     human_reason,
@@ -139,7 +140,9 @@ class PersistentPaperService:
                 else (Decimal(0), Decimal(0), None)
             )
             reason = funds[2]
-            if command.symbol not in ("BTC/USDT", "ETH/USDT"):
+            try:
+                crypto_spot_pair(command.symbol)
+            except ValueError:
                 reason = "unsupported_market"
             rejected = reason is not None or not report.fills
             partial = bool(report.fills and report.fills[0].notional_usd < notional_usd)
@@ -176,6 +179,10 @@ class PersistentPaperService:
         buy_book: NormalizedOrderBook | None,
         conn: sqlite3.Connection,
     ) -> tuple[Decimal, Decimal, str | None]:
+        try:
+            pair = crypto_spot_pair(command.symbol)
+        except ValueError:
+            return Decimal(0), Decimal(0), "unsupported_market"
         if (
             buy_book is None
             or not buy_book.asks
@@ -190,10 +197,8 @@ class PersistentPaperService:
             1 + opportunity.fees_pct / 200 + opportunity.slippage_pct / 100
         )
         base = command.notional_usd / price
-        quote_balance = self.store.get_balance(command.account_id, "USDT", conn=conn)
-        base_balance = self.store.get_balance(
-            command.account_id, command.symbol.split("/")[0], conn=conn
-        )
+        quote_balance = self.store.get_balance(command.account_id, pair.quote_asset, conn=conn)
+        base_balance = self.store.get_balance(command.account_id, pair.base_asset, conn=conn)
         if (
             quote_balance is None
             or base_balance is None
@@ -265,7 +270,9 @@ class PersistentPaperService:
                 else (Decimal(0), Decimal(0), None)
             )
             rejection = funding_error if report.fills else canonical_reason_code(report.reason_code)
-            if command.symbol not in ("BTC/USDT", "ETH/USDT"):
+            try:
+                crypto_spot_pair(command.symbol)
+            except ValueError:
                 rejection = "unsupported_market"
             if rejection:
                 order.update(
@@ -289,9 +296,13 @@ class PersistentPaperService:
                     }
                 )
             else:
-                base = command.symbol.split("/")[0]
-                self._change_balance(account_id, "USDT", -quote_reserve, quote_reserve, conn)
-                self._change_balance(account_id, base, -base_reserve, base_reserve, conn)
+                pair = crypto_spot_pair(command.symbol)
+                self._change_balance(
+                    account_id, pair.quote_asset, -quote_reserve, quote_reserve, conn
+                )
+                self._change_balance(
+                    account_id, pair.base_asset, -base_reserve, base_reserve, conn
+                )
                 order.update(
                     status="accepted", reserved_quote=quote_reserve, reserved_base=base_reserve
                 )
@@ -301,15 +312,25 @@ class PersistentPaperService:
                 reserve_cost = report.reconciliation.slippage_cost_usd
                 spent = bought.notional_usd + bought.fee_usd + reserve_cost
                 self._change_balance(
-                    account_id, "USDT", sold.notional_usd - sold.fee_usd, -spent, conn
+                    account_id,
+                    pair.quote_asset,
+                    sold.notional_usd - sold.fee_usd,
+                    -spent,
+                    conn,
                 )
-                self._change_balance(account_id, base, bought.quantity, -sold.quantity, conn)
+                self._change_balance(
+                    account_id, pair.base_asset, bought.quantity, -sold.quantity, conn
+                )
                 remaining = max(Decimal(0), notional_usd - bought.notional_usd)
                 quote_left = max(Decimal(0), quote_reserve - spent)
                 base_left = max(Decimal(0), base_reserve - sold.quantity)
                 if remaining == 0:
-                    self._change_balance(account_id, "USDT", quote_left, -quote_left, conn)
-                    self._change_balance(account_id, base, base_left, -base_left, conn)
+                    self._change_balance(
+                        account_id, pair.quote_asset, quote_left, -quote_left, conn
+                    )
+                    self._change_balance(
+                        account_id, pair.base_asset, base_left, -base_left, conn
+                    )
                     quote_left = base_left = Decimal(0)
                 order.update(
                     status="partially_filled" if remaining else "filled",
@@ -355,8 +376,8 @@ class PersistentPaperService:
                 # cost basis for pre-funded inventory. Unknown P&L stays explicit.
                 marks = dict(account.get("marks", {}))
                 mark_sources = dict(account.get("mark_sources", {}))
-                marks[base] = decimal_text(bought.price)
-                mark_sources[base] = "last_validated_paper_buy_fill"
+                marks[pair.base_asset] = decimal_text(bought.price)
+                mark_sources[pair.base_asset] = "last_validated_paper_buy_fill"
                 account["marks"] = marks
                 account["mark_sources"] = mark_sources
                 self.store.upsert_account(account_id, account, conn=conn)
@@ -389,11 +410,18 @@ class PersistentPaperService:
         balance = self.store.get_balance(account_id, asset, conn=conn)
         if balance is None:
             raise PaperCommandError("balance_missing", "Баланс актива не найден")
+        next_available = Decimal(balance["available"]) + available
+        next_reserved = Decimal(balance["reserved"]) + reserved
+        if next_available < 0 or next_reserved < 0:
+            raise PaperCommandError(
+                "insufficient_paper_balance",
+                "Баланс учебного счёта не может стать отрицательным",
+            )
         self.store.upsert_balance(
             account_id,
             asset,
-            Decimal(balance["available"]) + available,
-            Decimal(balance["reserved"]) + reserved,
+            next_available,
+            next_reserved,
             conn=conn,
         )
 
@@ -455,9 +483,10 @@ class PersistentPaperService:
                 raise PaperCommandError("order_not_found", "Бумажный ордер не найден")
             if order["status"] not in OPEN_STATUSES:
                 raise PaperCommandError("order_not_cancellable", "Ордер уже закрыт")
+            pair = crypto_spot_pair(str(order["symbol"]))
             quote, base = Decimal(order["reserved_quote"]), Decimal(order["reserved_base"])
-            self._change_balance(account_id, "USDT", quote, -quote, conn)
-            self._change_balance(account_id, order["symbol"].split("/")[0], base, -base, conn)
+            self._change_balance(account_id, pair.quote_asset, quote, -quote, conn)
+            self._change_balance(account_id, pair.base_asset, base, -base, conn)
             order.update(
                 status="cancelled",
                 reserved_quote=Decimal(0),

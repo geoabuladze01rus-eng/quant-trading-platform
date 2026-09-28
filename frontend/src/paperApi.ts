@@ -14,6 +14,12 @@ export interface Portfolio { account: Account; balances: Balance[]; orders: Pape
 export interface ResidualDecision extends Row { status: 'flat' | 'hedge_required' | 'halted'; reason_code: string; human_reason: string; residual_quantity: string; residual_notional_usd: string | null; mark_source: string | null; mark_age_ms: number | null; configured_cap_usd: string; filled_leg: string; hedge_side: string | null; reason_not_executed: string; hedge_proposal: Row | null; paper_only: true; live_execution: false }
 export interface ResidualObservation extends Row { execution_group_id: string; symbol: string; decision: ResidualDecision; paper_only: true; live_execution: false }
 
+export class PaperRequestError extends Error {
+  constructor(message: string, public readonly uncertain: boolean, public readonly reasonCode?: string) {
+    super(message);
+  }
+}
+
 function object(value: unknown): Row {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected object');
   return value as Row;
@@ -102,10 +108,21 @@ async function request<T>(path: string, parse: (value: unknown) => T, payload?: 
     const response = await fetch(`${base}${path}`, { method: payload ? 'POST' : 'GET', credentials: 'omit', cache: 'no-store', signal: controller.signal,
       headers: { ...(payload ? { 'Content-Type': 'application/json' } : {}), ...(key ? { 'Idempotency-Key': key } : {}) },
       body: payload ? JSON.stringify(payload) : undefined });
-    if (!response.ok) throw new Error('Backend request rejected');
+    if (!response.ok) {
+      let message = 'Backend отклонил paper-команду.';
+      let reasonCode: string | undefined;
+      try {
+        const body = object(await response.json());
+        const detail = body.detail && typeof body.detail === 'object' && !Array.isArray(body.detail) ? object(body.detail) : body;
+        if (typeof detail.reason_code === 'string') reasonCode = detail.reason_code;
+        if (typeof detail.human_reason === 'string') message = detail.human_reason;
+      } catch { /* The HTTP outcome is still known even if its error body is invalid. */ }
+      throw new PaperRequestError(reasonCode ? `${message} · ${reasonCode}` : message, false, reasonCode);
+    }
     return parse(await response.json());
-  } catch {
-    throw new Error(payload && key ? 'Outcome unknown. Do not submit again. Refresh the ledger and inspect the request key.' : 'Backend unavailable or invalid data. Paper actions are disabled.');
+  } catch (cause) {
+    if (cause instanceof PaperRequestError) throw cause;
+    throw new PaperRequestError(payload && key ? 'Результат неизвестен. Не повторяйте запрос: обновите журнал и проверьте request key.' : 'Backend недоступен или вернул некорректные данные.', !!(payload && key));
   } finally { clearTimeout(timer); }
 }
 const payload = (item: Opportunity) => ({ symbol: item.symbol, buy_venue: item.buy_venue, sell_venue: item.sell_venue, notional_usdt: decimal(item.simulation_notional_usd) });
@@ -113,11 +130,17 @@ export const previewOrder = (item: Opportunity) => request('/paper/orders/previe
 export const createOrder = (item: Opportunity, key: string) => request('/paper/orders', command, payload(item), key);
 export const cancelOrder = (id: string, key: string) => request(`/paper/orders/${encodeURIComponent(id)}/cancel`, command, {}, key);
 export const getOrder = (id: string) => request(`/paper/orders/${encodeURIComponent(id)}`, order);
+export const getPaperAccount = () => request('/paper/account', account);
+export const getPaperBalances = () => request('/paper/balances', (v) => rows(v, balance));
+export const getSavedPaperOrders = () => request('/paper/orders', (v) => rows(v, order));
+export const getSavedPaperFills = () => request('/paper/fills', (v) => rows(v, fill));
+export const getPaperPositions = () => request('/paper/positions', (v) => rows(v, position));
+export const getPaperPerformance = () => request('/paper/performance', performance);
+export const getPaperReconciliation = () => request('/paper/reconciliation', reconciliation);
 export async function getPortfolio(): Promise<Portfolio> {
   const [a, b, o, f, p, perf, rec] = await Promise.all([
-    request('/paper/account', account), request('/paper/balances', (v) => rows(v, balance)),
-    request('/paper/orders', (v) => rows(v, order)), request('/paper/fills', (v) => rows(v, fill)),
-    request('/paper/positions', (v) => rows(v, position)), request('/paper/performance', performance), request('/paper/reconciliation', reconciliation),
+    getPaperAccount(), getPaperBalances(), getSavedPaperOrders(), getSavedPaperFills(),
+    getPaperPositions(), getPaperPerformance(), getPaperReconciliation(),
   ]);
   return { account: a, balances: b, orders: o, fills: f, positions: p, performance: perf, reconciliation: rec };
 }

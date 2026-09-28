@@ -25,7 +25,8 @@ class AuditStore(Protocol):
 
 
 _FIELDS = frozenset((
-    "event_id", "timestamp", "actor", "actor_type", "event_type", "strategy", "symbol",
+    "account_id", "event_id", "timestamp", "actor", "actor_type", "event_type",
+    "strategy", "symbol",
     "venue", "market_type", "order_id", "opportunity_id", "decision", "reason_code",
     "human_reason", "risk_score", "gross_edge", "fees", "slippage", "net_edge",
     "data_age_ms", "correlation_id", "algorithm_version",
@@ -43,7 +44,8 @@ class PersistentAuditLog:
             raise ValueError("Unsupported audit fields; secrets and raw payloads are prohibited")
         item: dict[str, object] = dict.fromkeys(_FIELDS, "")
         item.update({
-            "event_id": str(uuid4()), "timestamp": datetime.now(UTC).isoformat(),
+            "account_id": "paper-default", "event_id": str(uuid4()),
+            "timestamp": datetime.now(UTC).isoformat(),
             "actor": "system", "actor_type": "system", "algorithm_version": "1",
             "risk_score": "blocked", "data_age_ms": None,
             **dict.fromkeys(_FINANCIAL, None), **fields,

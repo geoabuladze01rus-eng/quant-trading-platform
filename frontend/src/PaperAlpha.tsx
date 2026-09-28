@@ -1,94 +1,204 @@
+import { AlertTriangle, ArrowRight, CircleDollarSign, ReceiptText, WalletCards } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { cancelOrder, createOrder, getAuditPage, getOrder, getPortfolio, getResidualExposure, paperConfigured, previewOrder } from './paperApi';
-import type { CommandResult, Json, PaperOrder, Portfolio, ResidualObservation, Row } from './paperApi';
-import type { AuditEvent, Opportunity, Venue } from './types';
-import { simulationBlock } from './PaperExecution';
 
+import {
+  cancelOrder, createOrder, getAuditPage, getOrder, getPaperAccount, getPaperBalances,
+  getPaperPerformance, getPaperPositions, getPaperReconciliation, getResidualExposure,
+  getSavedPaperFills, getSavedPaperOrders, paperConfigured, PaperRequestError, previewOrder,
+} from './paperApi';
+import type { Account, Balance, CommandResult, Json, PaperOrder, Reconciliation, ResidualObservation, Row } from './paperApi';
+import { simulationBlock } from './paperSafety';
+import type { AuditEvent, Opportunity, Venue } from './types';
+
+const ASSETS = ['USDT', 'BTC', 'ETH', 'LTC'] as const;
 const label = (key: string) => key.replace(/_/g, ' ');
-const display = (value: Json): string => value === null ? 'Unavailable' : typeof value === 'object' ? JSON.stringify(value) : String(value);
-function Records({ records }: { records: Row[] }) {
-  return records.length ? <div className="paper-records">{records.map((row, i) => <dl key={i}>{Object.entries(row).map(([key, value]) => <div key={key}><dt>{label(key)}</dt><dd>{display(value)}</dd></div>)}</dl>)}</div> : <p>No records yet.</p>;
+const display = (value: Json | undefined): string => value === null || value === undefined ? 'Недоступно' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+const venueName = (value: Json | undefined) => ({ binance: 'Binance', bybit: 'Bybit', okx: 'OKX' }[String(value)] ?? display(value));
+
+interface Section<T> { data: T | null; error: string }
+const pending = <T,>(): Section<T> => ({ data: null, error: '' });
+async function section<T>(promise: Promise<T>, error: string): Promise<Section<T>> {
+  try { return { data: await promise, error: '' }; }
+  catch { return { data: null, error }; }
 }
+interface PortfolioSections {
+  account: Section<Account>;
+  balances: Section<Balance[]>;
+  orders: Section<PaperOrder[]>;
+  fills: Section<Row[]>;
+  positions: Section<Row[]>;
+  performance: Section<Row>;
+  reconciliation: Section<Reconciliation>;
+}
+const initialSections = (): PortfolioSections => ({
+  account: pending(), balances: pending(), orders: pending(), fills: pending(), positions: pending(), performance: pending(), reconciliation: pending(),
+});
+
+function Records({ records }: { records: Row[] }) {
+  return records.length ? <div className="paper-records">{records.map((row, index) => <dl key={index}>{Object.entries(row).map(([key, value]) => <div key={key}><dt>{label(key)}</dt><dd>{display(value)}</dd></div>)}</dl>)}</div> : <p className="empty-copy">Записей пока нет.</p>;
+}
+
 function AuditBrowser() {
-  const [offset, setOffset] = useState(0), [filter, setFilter] = useState(''), [reason, setReason] = useState('');
+  const [offset, setOffset] = useState(0);
+  const [filter, setFilter] = useState('');
+  const [reason, setReason] = useState('');
   const [page, setPage] = useState<Awaited<ReturnType<typeof getAuditPage>> | null>(null);
   const [error, setError] = useState('');
-  useEffect(() => { let active = true; setPage(null); void getAuditPage(offset, reason ? { reason_code: reason } : {}).then((value) => { if (active) { setPage(value); setError(''); } }).catch(() => { if (active) setError('Audit unavailable.'); }); return () => { active = false; }; }, [offset, reason]);
-  return <details><summary>Advanced: persistent decision audit</summary>
-    <form onSubmit={(event) => { event.preventDefault(); setOffset(0); setReason(filter.trim()); }}><label>Reason code <input value={filter} onChange={(event) => setFilter(event.target.value)} /></label><button>Filter audit</button></form>
-    {error && <p role="alert">{error}</p>}{page ? <><p>{page.total} events · offset {page.offset}</p><Records records={page.items} /><button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}>Previous</button><button disabled={offset + page.items.length >= page.total} onClick={() => setOffset(offset + 50)}>Next</button></> : <p>Loading audit…</p>}
+  useEffect(() => {
+    let active = true;
+    setPage(null);
+    void getAuditPage(offset, reason ? { reason_code: reason } : {}).then((value) => { if (active) { setPage(value); setError(''); } }).catch(() => { if (active) setError('Persistent audit недоступен.'); });
+    return () => { active = false; };
+  }, [offset, reason]);
+  return <details className="advanced-block"><summary>Advanced: persistent audit</summary>
+    <form className="filter-form" onSubmit={(event) => { event.preventDefault(); setOffset(0); setReason(filter.trim()); }}>
+      <label>Reason code<input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="например insufficient_net_edge" /></label><button>Фильтровать</button>
+    </form>
+    {error && <p role="alert" className="inline-alert">{error}</p>}
+    {page ? <><p className="empty-copy">{page.total} events · offset {page.offset}</p><Records records={page.items} /><div className="button-row"><button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}>Назад</button><button disabled={offset + page.items.length >= page.total} onClick={() => setOffset(offset + 50)}>Дальше</button></div></> : <p className="empty-copy">Audit загружается…</p>}
   </details>;
 }
-export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge }: { opportunities: Opportunity[]; venues: Venue[]; audit: AuditEvent[]; receivedAt: number; maxAge: number }) {
-  const [now, setNow] = useState(Date.now()), [revision, setRevision] = useState(0);
-  const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
-  const [residuals, setResiduals] = useState<ResidualObservation[] | null>(null);
-  const [residualError, setResidualError] = useState('');
-  const [busy, setBusy] = useState(false), [message, setMessage] = useState('');
+
+export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge, actionsEnabled }: {
+  opportunities: Opportunity[]; venues: Venue[]; audit: AuditEvent[]; receivedAt: number; maxAge: number; actionsEnabled: boolean;
+}) {
+  const [now, setNow] = useState(Date.now());
+  const [revision, setRevision] = useState(0);
+  const [portfolio, setPortfolio] = useState<PortfolioSections>(initialSections);
+  const [residuals, setResiduals] = useState<Section<ResidualObservation[]>>(pending);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
   const busyRef = useRef(false);
   const [preview, setPreview] = useState<{ item: Opportunity; result: CommandResult } | null>(null);
   const [result, setResult] = useState<CommandResult | null>(null);
   const [detail, setDetail] = useState<PaperOrder | null>(null);
-  const [uncertain, setUncertain] = useState(false), [requestKey, setRequestKey] = useState('');
+  const [uncertain, setUncertain] = useState(false);
+  const [requestKey, setRequestKey] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 100); return () => clearInterval(timer); }, []);
-  useEffect(() => { let active = true; setPortfolio(null); if (paperConfigured) void getPortfolio().then((value) => { if (active) setPortfolio(value); }).catch((cause) => { if (active) setMessage(String(cause.message)); }); return () => { active = false; }; }, [revision]);
-  useEffect(() => { let active = true; setResiduals(null); if (paperConfigured) void getResidualExposure().then((value) => { if (active) { setResiduals(value); setResidualError(''); } }).catch(() => { if (active) setResidualError('Residual review unavailable. Paper preview is paused.'); }); return () => { active = false; }; }, [revision]);
-  useEffect(() => { if (preview) dialog.current?.showModal(); else dialog.current?.close(); }, [preview]);
+
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(timer); }, []);
+  useEffect(() => {
+    let active = true;
+    if (!paperConfigured) return () => { active = false; };
+    setPortfolio(initialSections());
+    void Promise.all([
+      section(getPaperAccount(), 'Account недоступен'), section(getPaperBalances(), 'Balances недоступны'),
+      section(getSavedPaperOrders(), 'Сделки недоступны'), section(getSavedPaperFills(), 'Fills недоступны'),
+      section(getPaperPositions(), 'Positions недоступны'), section(getPaperPerformance(), 'P&L недоступен'),
+      section(getPaperReconciliation(), 'Reconciliation недоступен'),
+    ]).then(([account, balances, orders, fills, positions, performance, reconciliation]) => {
+      if (active) setPortfolio({ account, balances, orders, fills, positions, performance, reconciliation });
+    });
+    void section(getResidualExposure(), 'Residual exposure недоступен').then((value) => { if (active) setResiduals(value); });
+    return () => { active = false; };
+  }, [revision]);
+  useEffect(() => { if (preview) dialog.current?.showModal(); else if (dialog.current?.open) dialog.current.close(); }, [preview]);
+
+  const reconciliationOk = portfolio.reconciliation.data?.status === 'ok';
+  const accountActive = portfolio.account.data?.status === 'active';
+  const residualsFlat = !!residuals.data && residuals.data.every((row) => row.decision.status === 'flat');
+  const portfolioReady = !!portfolio.account.data && !!portfolio.balances.data && reconciliationOk;
+
   async function showPreview(item: Opportunity) {
-    if (busyRef.current || simulationBlock(item, venues, Date.now() - receivedAt, maxAge) || !portfolio || !residuals || residuals.some((row) => row.decision.status !== 'flat') || uncertain) return;
+    const blocked = simulationBlock(item, venues, Date.now() - receivedAt, maxAge);
+    if (busyRef.current || blocked || !actionsEnabled || !portfolioReady || !residualsFlat || uncertain) return;
     busyRef.current = true; setBusy(true); setMessage('');
-    try { setPreview({ item, result: await previewOrder(item) }); } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Preview unavailable.'); }
+    try { setPreview({ item, result: await previewOrder(item) }); }
+    catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Preview недоступен.'); }
     finally { busyRef.current = false; setBusy(false); }
   }
   async function mutate(item?: Opportunity, cancelId?: string) {
-    if (busyRef.current || uncertain || !portfolio || !paperConfigured) return;
-    const key = crypto.randomUUID(); setRequestKey(key); busyRef.current = true; setBusy(true); setMessage(''); setResult(null);
+    if (busyRef.current || uncertain || !portfolioReady || !paperConfigured || !actionsEnabled) return;
+    const key = crypto.randomUUID();
+    setRequestKey(key); busyRef.current = true; setBusy(true); setMessage(''); setResult(null);
     try { setResult(cancelId ? await cancelOrder(cancelId, key) : await createOrder(item!, key)); setPreview(null); }
-    catch (cause) { setUncertain(true); setPreview(null); setMessage(cause instanceof Error ? cause.message : 'Outcome unknown. Inspect ledger.'); }
-    finally { busyRef.current = false; setBusy(false); setRevision((v) => v + 1); }
+    catch (cause) {
+      setUncertain(cause instanceof PaperRequestError ? cause.uncertain : true);
+      setPreview(null); setMessage(cause instanceof Error ? cause.message : 'Результат запроса неизвестен.');
+    } finally { busyRef.current = false; setBusy(false); setRevision((value) => value + 1); }
   }
-  return <section className="panel" id="paper"><h2>Paper Alpha · virtual portfolio</h2>
-    <p>PAPER ONLY. Virtual balances and simulated fills. No exchange orders, real money or promised returns. Records reload from the backend after a restart.</p>
-    {!paperConfigured && <p role="status">Demo mode · backend disabled. No portfolio records or fills are fabricated.</p>}
-    <button disabled={busy || !paperConfigured} onClick={() => setRevision((v) => v + 1)}>Refresh saved portfolio</button>
-    {message && <p role="alert">{message}</p>}{requestKey && <p>Last request key: <code>{requestKey}</code></p>}
-    {uncertain && <p role="alert">Actions paused after an unknown outcome. Inspect the saved ledger and request key before starting a new request.</p>}
-    {paperConfigured && !portfolio && <p>Portfolio loading or unavailable. Paper actions disabled.</p>}
-    {portfolio && <><div className="metric-grid">
-      {([['Virtual equity', portfolio.account.virtual_equity_usdt], ['Realized PnL', portfolio.account.realized_pnl_usdt], ['Unrealized PnL', portfolio.account.unrealized_pnl_usdt], ['Daily PnL', portfolio.performance.daily_pnl_usdt ?? null], ['Fees paid', portfolio.account.fees_paid_usdt], ['Slippage cost', portfolio.account.slippage_cost_usdt]] as [string, Json][]).map(([name, value]) => <article className="metric-card" key={name}><span>{name}</span><strong>{display(value)}</strong><small>Virtual USDT</small></article>)}
-      </div><p>{portfolio.positions.filter((p) => p.status === 'open').length} open positions · {portfolio.orders.filter((o) => o.status === 'rejected').length} rejected orders</p>
-      <div className="table-wrap"><table><caption>Virtual balances</caption><thead><tr><th>Asset</th><th>Available</th><th>Reserved</th><th>Total</th></tr></thead><tbody>{portfolio.balances.map((b) => <tr key={b.asset}><td>{b.asset}</td><td>{b.available}</td><td>{b.reserved}</td><td>{b.total}</td></tr>)}</tbody></table></div>
-      <p role={portfolio.reconciliation.status === 'error' ? 'alert' : 'status'}>Reconciliation: {portfolio.reconciliation.status}</p>
-      {portfolio.account.status !== 'active' && <p role="alert">Paper account is halted after an accounting mismatch. New paper orders are blocked until the ledger is repaired.</p>}
-      {Array.isArray(portfolio.account.unpriced_pnl_assets) && portfolio.account.unpriced_pnl_assets.length > 0 && <p role="status">Unrealized PnL is unavailable for initial inventory with unknown cost basis. The asset list is shown in Advanced accounting.</p>}
-      <Records records={portfolio.reconciliation.issues} /></>}
-    <section className="residual-review" aria-label="Residual exposure review">
-      <h3>Остаточная экспозиция · PAPER ONLY</h3>
-      <p>Реальные деньги не используются. Live locked. Защитный paper-хедж здесь не исполняется автоматически.</p>
-      {residualError && <p role="alert">{residualError}</p>}
-      {paperConfigured && !residuals && !residualError && <p>Проверка остатка загружается; preview временно заблокирован.</p>}
-      {residuals?.length === 0 && <p role="status">Сохранённых исполнений пока нет.</p>}
-      {residuals?.map(({ execution_group_id, symbol, decision }) => <article className={`residual-state residual-${decision.status}`} key={execution_group_id} role={decision.status === 'flat' ? 'status' : 'alert'}>
-        <strong>{symbol} · {decision.status === 'flat' ? 'Объёмы совпадают' : decision.status === 'hedge_required' ? 'Нужна ручная проверка остатка' : 'Остановлено — проверьте учёт и котировки'}</strong>
-        <p>{decision.human_reason} · {decision.reason_code}</p>
-        <p>Нога: {decision.filled_leg} · остаток {decision.residual_quantity} · оценка {decision.residual_notional_usd ?? 'нет свежей цены'} USDT · лимит {decision.configured_cap_usd} USDT.</p>
-        <p>Mark: {decision.mark_source ?? 'не подтверждён'} · свежесть {decision.mark_age_ms === null ? 'недоступна' : `${decision.mark_age_ms} ms`}.</p>
-        {decision.status === 'hedge_required' && <p>Предполагаемое направление: {decision.hedge_side}. {decision.reason_not_executed}</p>}
-        {decision.status === 'halted' && <p>Действие: не отправляйте новые paper-команды; проверьте audit, источник mark и reconciliation.</p>}
-      </article>)}
-    </section>
-    <h3>Preview a paper opportunity</h3>{!opportunities.length && <p>No opportunities from current sources. Wait for healthy market data.</p>}
-    {opportunities.map((item) => { const blocked = simulationBlock(item, venues, now - receivedAt, maxAge); return <article className="paper-opportunity" key={item.id}>
-      <h4>{item.symbol} · {item.buy_venue} → {item.sell_venue}</h4><p>{item.summary}</p><p>{item.reason_code}: {item.reason_text}</p>
-      <p>Risk gate: {item.risk_score} · fees {item.fees_pct.toFixed(2)}% · slippage {item.slippage_pct.toFixed(2)}% · expected net {item.expected_net_pct.toFixed(4)}%</p>
-      <button disabled={!!blocked || busy || !portfolio || !residuals || residuals.some((row) => row.decision.status !== 'flat') || uncertain || portfolio.reconciliation.status === 'error' || portfolio.account.status !== 'active'} onClick={() => void showPreview(item)}>Preview paper order</button><p>{blocked || residualError || `Virtual notional ${item.simulation_notional_usd} USDT. Preview does not save an order.`}</p>
-      <details><summary>Advanced: sources and decision</summary><p>Gross {item.gross_spread_pct}% · age {Math.round(item.data_age_ms + Math.max(0, now - receivedAt))} ms · maximum {maxAge} ms.</p>{venues.filter((v) => [item.buy_venue, item.sell_venue].includes(v.name)).map((v) => <p key={v.name}>{v.name} · {v.status} · bid {v.bid ?? 'no data'} / ask {v.ask ?? 'no data'} · timestamp {v.timestamp_source ?? 'unknown'} · depth {v.depth_status}, {v.bid_levels}/{v.ask_levels} levels</p>)}{audit.filter((event) => event.opportunity_id === item.id).slice(0, 10).map((event) => <p key={event.id}>{event.timestamp} · {event.who} · {event.reason}</p>)}</details>
-    </article>; })}
-    <dialog ref={dialog} aria-labelledby="paper-confirm-title" onCancel={() => { if (!busy) setPreview(null); }}>{preview && <><h2 id="paper-confirm-title">Confirm PAPER ONLY order</h2><p>Virtual notional {preview.item.simulation_notional_usd} USDT · {preview.item.symbol}</p><p>{preview.result.order.reason_code}: {preview.result.order.human_reason}</p><p>Preview status: {preview.result.order.status}. Confirmation reruns backend checks against current books and balances.</p><Records records={[preview.result.explanation]} /><button disabled={busy || preview.result.order.status === 'rejected' || preview.result.reconciliation.status === 'error'} onClick={() => void mutate(preview.item)}>Confirm paper order</button><button disabled={busy} onClick={() => setPreview(null)}>Back without creating</button></>}</dialog>
-    {result && <div role="status"><h3>Paper order {label(result.order.status)}</h3><p>{result.order.reason_code}: {result.order.human_reason}</p><p>Order {result.order.id}</p><Records records={result.reconciliation.issues} /></div>}
-    {portfolio && <><h3>Saved orders</h3>{!portfolio.orders.length ? <p>No saved orders yet.</p> : portfolio.orders.slice(0, 100).map((order) => <article className="paper-opportunity" key={order.id}><strong>{order.symbol} · {label(order.status)}</strong><p>{order.reason_code}: {order.human_reason}</p><button onClick={() => void getOrder(order.id).then(setDetail).catch(() => setMessage('Order details unavailable.'))}>Inspect order</button>{['created', 'accepted', 'partially_filled'].includes(order.status) && <button disabled={busy || uncertain} onClick={() => void mutate(undefined, order.id)}>Cancel remaining paper quantity</button>}</article>)}
-      {detail && <details open><summary>Selected order</summary><Records records={[detail]} /></details>}
-      <details><summary>Advanced: fills, positions and accounting</summary><h4>Simulated fills</h4><Records records={portfolio.fills} /><h4>Positions</h4><Records records={portfolio.positions} /><h4>Performance</h4><Records records={[portfolio.performance]} /></details><AuditBrowser /></>}
+
+  const account = portfolio.account.data;
+  const performance = portfolio.performance.data;
+  const balances = portfolio.balances.data ?? [];
+  const orders = portfolio.orders.data ?? [];
+  const fills = portfolio.fills.data ?? [];
+  const approved = opportunities.filter((item) => item.approved);
+  const portfolioErrors = Object.values(portfolio).map((item) => item.error).filter(Boolean);
+
+  return <section className="paper-section" id="paper">
+    <div className="section-heading"><div><p className="eyebrow">Только виртуальный учёт</p><h2>Виртуальные деньги и paper-сделки</h2></div><button className="secondary-button" disabled={busy || !paperConfigured} onClick={() => setRevision((value) => value + 1)}>Обновить portfolio</button></div>
+    {!paperConfigured && <div className="inline-alert neutral" role="status">Demo mode: portfolio и fills не выдумываются. Укажите VITE_API_BASE_URL.</div>}
+    {portfolioErrors.length > 0 && <div className="inline-alert warning" role="alert">{portfolioErrors.join(' · ')}. Доступные секции показаны ниже.</div>}
+    {message && <div className="inline-alert warning" role="alert">{message}</div>}
+    {uncertain && <div className="inline-alert danger" role="alert">Paper-действия приостановлены после неизвестного исхода. Сверьте ledger и request key {requestKey}.</div>}
+
+    <div className="money-grid">
+      <article className="money-card primary-money">
+        <div className="card-icon"><CircleDollarSign size={21} /></div><small>Виртуальные деньги</small>
+        <strong>{display(account?.virtual_equity_usdt)} <em>USDT</em></strong><p>Не являются реальными средствами.</p>
+      </article>
+      <article className="money-card"><small>Realized P&amp;L</small><strong className={Number(account?.realized_pnl_usdt ?? 0) >= 0 ? 'value-positive' : 'value-danger'}>{display(account?.realized_pnl_usdt)} USDT</strong><p>Закрытый paper-результат</p></article>
+      <article className="money-card"><small>Unrealized P&amp;L</small><strong>{display(account?.unrealized_pnl_usdt)} USDT</strong><p>По доступным mark prices</p></article>
+      <article className="money-card"><small>Fees + slippage</small><strong>{display(account?.fees_paid_usdt)} + {display(account?.slippage_cost_usdt)}</strong><p>Виртуальные расходы, USDT</p></article>
+    </div>
+
+    <div className="portfolio-grid">
+      <article className="panel balance-panel">
+        <div className="panel-title"><div><WalletCards size={19} /><h3>Balances</h3></div><span className={`state-chip ${reconciliationOk ? 'positive' : 'warning'}`}>{reconciliationOk ? 'Reconciled' : 'Не подтверждено'}</span></div>
+        <div className="balance-list">{ASSETS.map((asset) => {
+          const balance = balances.find((item) => item.asset === asset);
+          return <div className="balance-row" key={asset}><div className={`asset-icon ${asset.toLowerCase()}`}>{asset.slice(0, 1)}</div><div><strong>{asset}</strong><span>Доступно {balance?.available ?? '—'}</span></div><strong>{balance?.total ?? '—'}</strong></div>;
+        })}</div>
+      </article>
+
+      <article className="panel performance-panel">
+        <div className="panel-title"><div><ReceiptText size={19} /><h3>Учёт результата</h3></div></div>
+        <dl className="performance-list">
+          <div><dt>Daily P&amp;L</dt><dd>{display(performance?.daily_pnl_usdt)} USDT</dd></div>
+          <div><dt>Filled orders</dt><dd>{display(performance?.filled_orders)}</dd></div>
+          <div><dt>Rejected orders</dt><dd>{display(performance?.rejected_orders)}</dd></div>
+          <div><dt>Open positions</dt><dd>{portfolio.positions.data?.filter((position) => position.status === 'open').length ?? '—'}</dd></div>
+        </dl>
+        {account && account.status !== 'active' && <div className="inline-alert danger">Account остановлен из-за accounting mismatch.</div>}
+      </article>
+    </div>
+
+    <div className="section-heading compact"><div><p className="eyebrow">Persistent ledger</p><h3>Последние paper-сделки</h3></div><span>{orders.length} orders · {fills.length} fills</span></div>
+    <div className="trade-list">
+      {orders.length ? orders.slice(0, 20).map((order) => {
+        const orderFills = fills.filter((fill) => fill.order_id === order.id);
+        return <article className="trade-card" key={order.id}>
+          <div className="trade-main"><div><strong>{order.symbol}</strong><span>{venueName(order.buy_venue)} <ArrowRight size={13} /> {venueName(order.sell_venue)}</span></div><div><small>Notional</small><strong>{order.notional_usdt} USDT</strong></div><span className={`state-chip ${order.status === 'filled' ? 'positive' : order.status === 'rejected' || order.status === 'failed' ? 'danger' : 'warning'}`}>{label(order.status)}</span></div>
+          <p className="reason-line"><span>{order.status === 'rejected' ? 'Причина отказа' : 'Результат'}</span>{order.human_reason} · {order.reason_code}</p>
+          <details><summary>Метрики, fills и идентификаторы</summary><Records records={[order, ...orderFills]} /></details>
+          <div className="button-row"><button className="text-button" onClick={() => void getOrder(order.id).then(setDetail).catch(() => setMessage('Детали order недоступны.'))}>Проверить order</button>{['created', 'accepted', 'partially_filled'].includes(order.status) && <button className="text-button danger-text" disabled={busy || uncertain || !actionsEnabled} onClick={() => void mutate(undefined, order.id)}>Отменить остаток paper-order</button>}</div>
+        </article>;
+      }) : <div className="empty-card"><ReceiptText size={22} /><strong>Paper-сделок пока нет</strong><p>Ledger остаётся пустым, пока backend не подтвердит виртуальную сделку.</p></div>}
+    </div>
+    {detail && <details className="advanced-block" open><summary>Выбранный order</summary><Records records={[detail]} /></details>}
+
+    <div className="section-heading compact"><div><p className="eyebrow">Preview с повторной risk-проверкой</p><h3>Paper-возможности</h3></div><span>{approved.length} доступны</span></div>
+    <div className="preview-grid">
+      {approved.length ? approved.map((item) => {
+        const blocked = !actionsEnabled ? 'Safety state не подтверждён.' : simulationBlock(item, venues, now - receivedAt, maxAge) || residuals.error;
+        return <article className="preview-card" key={item.id}><div><strong>{item.symbol}</strong><span>{venueName(item.buy_venue)} → {venueName(item.sell_venue)}</span></div><p>Net edge <strong>{item.expected_net_pct.toFixed(4)}%</strong> · fees {item.fees_pct.toFixed(2)}%</p><button disabled={!!blocked || busy || !portfolioReady || !residualsFlat || uncertain || !accountActive} onClick={() => void showPreview(item)}>Открыть paper-preview</button><small>{blocked || `Виртуальный notional ${item.simulation_notional_usd} USDT`}</small></article>;
+      }) : <p className="empty-copy">Нет свежих risk-approved возможностей.</p>}
+    </div>
+
+    <details className="advanced-block"><summary>Advanced: residual exposure, positions и accounting</summary>
+      {residuals.error && <p className="inline-alert warning">{residuals.error}</p>}
+      {residuals.data?.map(({ execution_group_id, symbol, decision }) => <div className={`residual-state residual-${decision.status}`} key={execution_group_id}><strong>{symbol} · {decision.status}</strong><p>{decision.human_reason} · {decision.reason_code}</p><p>Остаток {decision.residual_quantity} · оценка {decision.residual_notional_usd ?? 'нет mark'} USDT.</p></div>)}
+      <h4>Positions</h4><Records records={portfolio.positions.data ?? []} />
+      <h4>Reconciliation issues</h4><Records records={portfolio.reconciliation.data?.issues ?? []} />
+      <h4>Связанный decision audit</h4>{audit.slice(0, 10).map((event) => <p className="audit-inline" key={event.id}>{event.timestamp} · {event.event} · {event.reason}</p>)}
+    </details>
+    {paperConfigured && <AuditBrowser />}
+
+    <dialog ref={dialog} aria-labelledby="paper-confirm-title" onCancel={() => { if (!busy) setPreview(null); }}>
+      {preview && <div className="dialog-content"><span className="state-chip paper">PAPER ONLY</span><h2 id="paper-confirm-title">Подтвердить виртуальную сделку</h2><p>{preview.item.symbol} · {venueName(preview.item.buy_venue)} → {venueName(preview.item.sell_venue)} · {preview.item.simulation_notional_usd} USDT</p><div className="inline-alert neutral">{preview.result.order.human_reason} · {preview.result.order.reason_code}</div><p>Backend заново проверит books, balances и risk limits. Реальный exchange order не создаётся.</p><div className="button-row"><button disabled={busy || preview.result.order.status === 'rejected' || preview.result.reconciliation.status === 'error'} onClick={() => void mutate(preview.item)}>Подтвердить PAPER order</button><button className="secondary-button" disabled={busy} onClick={() => setPreview(null)}>Назад</button></div></div>}
+    </dialog>
+    {result && <div className="inline-alert positive" role="status"><strong>Paper order: {label(result.order.status)}</strong><br />{result.order.human_reason} · {result.order.reason_code}</div>}
+    {requestKey && <p className="request-key">Последний request key: <code>{requestKey}</code></p>}
   </section>;
 }

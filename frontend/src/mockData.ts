@@ -1,4 +1,4 @@
-import type { AuditEvent, DashboardSettings, OpportunityResponse, Risk, Venue } from './types';
+import type { AuditEvent, DashboardSettings, OpportunityResponse, Risk, RobotStatus, Venue } from './types';
 
 // Demonstration fixtures only. Never substituted for a failed backend request.
 export const mockSettings: DashboardSettings = {
@@ -8,11 +8,11 @@ export const mockSettings: DashboardSettings = {
   max_trade_notional_usd: 100, min_expected_net_pct: 0.1,
 };
 export const mockVenues: Venue[] = [
-  ...['binance', 'bybit', 'okx'].map((name): Venue => ({
+  ...['BTC/USDT', 'ETH/USDT', 'LTC/USDT'].flatMap((symbol) => ['binance', 'bybit', 'okx'].map((name): Venue => ({
     depth_status: 'unavailable', bid_levels: 0, ask_levels: 0,
     name, market: 'crypto', mode: 'public_read_only', status: 'no_data', live_execution: false,
-    symbol: 'BTC/USDT', data_age_ms: null, error: null, bid: null, ask: null, timestamp_source: null,
-  })),
+    symbol, data_age_ms: null, error: null, bid: null, ask: null, timestamp_source: null,
+  }))),
   { name: 't_invest', market: 'russian_stocks', mode: 'sandbox', status: 'no_data', live_execution: false,
     depth_status: 'unavailable', bid_levels: 0, ask_levels: 0,
     symbol: 'SBER', data_age_ms: null, error: null, bid: null, ask: null, timestamp_source: null },
@@ -39,3 +39,10 @@ export const mockAudit: AuditEvent[] = [{
   id: 'demo-rejected', timestamp: 'Demo', market_scope: 'crypto',
   event: 'rejected', strategy: 'cross_venue_spread', reason: mockOpportunities.opportunities[0].reason,
 }];
+export const mockRobot: RobotStatus = {
+  state: 'disabled', reason_code: 'paper_robot_disabled',
+  human_reason: 'Автоматический paper-робот выключен в настройках.',
+  enabled: false, paper_only: true, live_execution: false, primary_venue: 'bybit',
+  strategy: 'bybit_anchored_cross_venue_spread', symbols: ['BTC/USDT', 'ETH/USDT', 'LTC/USDT'],
+  last_checked_at: null, last_signal: null, last_result: null,
+};

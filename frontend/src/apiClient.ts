@@ -1,5 +1,5 @@
-import { mockAudit, mockOpportunities, mockRisk, mockSettings, mockVenues } from './mockData';
-import type { AuditEvent, DashboardSettings, Opportunity, OpportunityResponse, PaperRecord, PaperReport, Risk, Venue } from './types';
+import { mockAudit, mockOpportunities, mockRisk, mockRobot, mockSettings, mockVenues } from './mockData';
+import type { AuditEvent, DashboardSettings, Opportunity, OpportunityResponse, PaperRecord, PaperReport, Risk, RobotStatus, Venue } from './types';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/+$/, '');
 export const isMockMode = !baseUrl;
@@ -67,6 +67,27 @@ export function getSettings(): Promise<DashboardSettings> {
       max_daily_loss_pct: number(v.max_daily_loss_pct),
       max_trade_notional_usd: number(v.max_trade_notional_usd),
       min_expected_net_pct: number(v.min_expected_net_pct),
+      crypto_paper_robot_enabled: v.crypto_paper_robot_enabled === undefined ? undefined : boolean(v.crypto_paper_robot_enabled),
+      crypto_paper_robot_primary_venue: v.crypto_paper_robot_primary_venue === undefined ? undefined : string(v.crypto_paper_robot_primary_venue),
+    };
+  });
+}
+
+export function getRobotStatus(): Promise<RobotStatus> {
+  return request('/crypto/paper-robot', mockRobot, (value) => {
+    const v = record(value);
+    if (v.paper_only !== true || v.live_execution !== false || !Array.isArray(v.symbols)) throw new Error('Unsafe robot state');
+    return {
+      state: string(v.state), reason_code: string(v.reason_code),
+      human_reason: v.human_reason === undefined ? undefined : string(v.human_reason),
+      enabled: boolean(v.enabled), paper_only: true, live_execution: false,
+      primary_venue: string(v.primary_venue), strategy: string(v.strategy),
+      symbols: v.symbols.map(string),
+      notional_limit_usdt: v.notional_limit_usdt === undefined ? undefined : string(v.notional_limit_usdt),
+      max_orders_per_day: v.max_orders_per_day === undefined ? undefined : number(v.max_orders_per_day),
+      last_checked_at: v.last_checked_at === undefined || v.last_checked_at === null ? null : number(v.last_checked_at),
+      last_signal: v.last_signal === undefined || v.last_signal === null ? null : record(v.last_signal),
+      last_result: v.last_result === undefined || v.last_result === null ? null : record(v.last_result),
     };
   });
 }

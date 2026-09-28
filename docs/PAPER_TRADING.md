@@ -77,6 +77,35 @@ curl http://127.0.0.1:8000/paper/residual-exposure
 curl 'http://127.0.0.1:8000/audit?limit=50&offset=0&event_type=paper_order_filled'
 ```
 
+## Crypto paper robot
+
+The disabled-by-default robot evaluates exactly `BTC/USDT`, `ETH/USDT`, and
+`LTC/USDT`. Each venue/pair has an independent health state. Missing, stale,
+future-dated, incomplete, or failed data blocks that pair without authorizing a
+trade from a cached book. Public venue rules supply price ticks, quantity steps,
+minimum quantities, and minimum notionals.
+
+A local paper spread is created only when its expected net edge remains positive
+and above the configured minimum after fees, configured slippage, and depth
+slippage. Rejected decisions are written to audit with a stable reason code.
+Account reconciliation mismatch, an open partial order, the daily loss limit, an
+insufficient prefunded leg, or an unsafe trading configuration blocks new orders.
+
+The robot is part of the FastAPI lifecycle; do not start a second worker against
+the same SQLite account. For a separate bounded test, use a separate database:
+
+```bash
+PAPER_DATABASE_PATH=/tmp/quant-crypto-paper-trial.sqlite3 \
+CRYPTO_PAPER_ROBOT_ENABLED=true \
+TRADING_MODE=paper LIVE_TRADING_ENABLED=false LIVE_ORDER_ACCEPTANCE_GATE=false \
+uvicorn quant_trading_platform.api.app:app --host 127.0.0.1 --port 8000
+```
+
+`GET /crypto/paper-robot` returns a decision state for every configured symbol.
+`GET /paper/performance` reports realized and unrealized P&L separately. Unknown
+marks or cost basis remain `null`; the dashboard must not label cash movement as
+profit.
+
 The older `/paper/orders/simulate` endpoint remains as a volatile compatibility
 simulation. It does not mutate the persistent virtual portfolio.
 
