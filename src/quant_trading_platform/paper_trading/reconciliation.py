@@ -89,13 +89,19 @@ def reconcile_records(
             issue("closed_order_reservation", "Закрытый ордер удерживает резерв", order_id)
         bought = fill_quantities[(order_id, "buy")]
         sold = fill_quantities[(order_id, "sell")]
-        if order["status"] in ("accepted", "partially_filled", "filled") and not bought:
+        order_side = str(order.get("side", "spread"))
+        filled = sold if order_side == "sell" else bought
+        if order["status"] in ("accepted", "partially_filled", "filled") and not filled:
             issue("order_without_fills", "Принятый ордер не содержит исполнений", order_id)
-        if bought != sold:
+        if order_side == "spread" and bought != sold:
             issue("unmatched_spread_legs", "Объёмы двух исполненных сторон не совпадают", order_id)
-        if bought != number(order.get("filled_quantity", "0"), order_id):
+        if order_side == "buy" and sold:
+            issue("unexpected_fill_side", "Покупка содержит исполнение продажи", order_id)
+        if order_side == "sell" and bought:
+            issue("unexpected_fill_side", "Продажа содержит исполнение покупки", order_id)
+        if filled != number(order.get("filled_quantity", "0"), order_id):
             issue("order_fill_mismatch", "Объём ордера расходится с исполнениями", order_id)
-        if order["status"] in ("rejected", "failed", "created", "accepted") and bought:
+        if order["status"] in ("rejected", "failed", "created", "accepted") and filled:
             issue("order_status_mismatch", "Статус ордера не соответствует исполнениям", order_id)
         remaining = number(order.get("remaining_notional_usd", "0"), order_id)
         if order["status"] == "filled" and remaining != 0:
@@ -137,10 +143,68 @@ def reconcile_records(
         issue("fees_total_mismatch", "Сумма комиссий расходится с исполнениями")
     if "slippage_paid_usd" in account and number(account["slippage_paid_usd"]) != slippage:
         issue("slippage_total_mismatch", "Резерв проскальзывания расходится с исполнениями")
-    if initial and "realized_pnl_usd" in account:
-        pnl = expected["USDT"] - number(initial.get("USDT", "0"))
-        if number(account["realized_pnl_usd"]) != pnl:
-            issue("realized_pnl_mismatch", "Реализованный результат расходится с денежным потоком")
+    reconstructed_inventory: dict[str, tuple[Decimal, Decimal]] = {}
+    reconstructed_pnl = Decimal(0)
+    fills_by_order: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for fill in fills:
+        fills_by_order[str(fill["order_id"])].append(fill)
+    for order in sorted(orders, key=lambda item: int(item.get("timestamp_ms", 0))):
+        order_id = str(order["order_id"])
+        side = str(order.get("side", "spread"))
+        order_fills = fills_by_order[order_id]
+        if side == "spread":
+            for fill in order_fills:
+                cash = number(fill.get("notional_usd", "0"), order_id)
+                fee = number(fill.get("fee_usd", "0"), order_id)
+                slip = number(fill.get("slippage_cost_usd", "0"), order_id)
+                signed_cash = cash if fill.get("side") == "sell" else -cash
+                reconstructed_pnl += signed_cash - fee - slip
+            continue
+        asset = str(order["symbol"]).split("/")[0]
+        quantity, cost = reconstructed_inventory.get(asset, (Decimal(0), Decimal(0)))
+        for fill in order_fills:
+            fill_quantity = number(fill.get("quantity", "0"), order_id)
+            notional = number(fill.get("notional_usd", "0"), order_id)
+            fee = number(fill.get("fee_usd", "0"), order_id)
+            slip = number(fill.get("slippage_cost_usd", "0"), order_id)
+            if side == "buy":
+                quantity += fill_quantity
+                cost += notional + fee + slip
+            elif fill_quantity > quantity or quantity <= 0:
+                issue(
+                    "strategy_inventory_mismatch",
+                    "Продажа превышает позицию, открытую стратегией",
+                    order_id,
+                )
+            else:
+                released = cost / quantity * fill_quantity
+                quantity -= fill_quantity
+                cost -= released
+                reconstructed_pnl += notional - fee - slip - released
+        reconstructed_inventory[asset] = (quantity, cost)
+    if (
+        initial
+        and "realized_pnl_usd" in account
+        and number(account["realized_pnl_usd"]) != reconstructed_pnl
+    ):
+        issue(
+            "realized_pnl_mismatch",
+            "Реализованный результат расходится с денежным потоком",
+        )
+    if "strategy_inventory" in account:
+        saved_inventory = account.get("strategy_inventory", {})
+        for asset in set(reconstructed_inventory) | set(saved_inventory):
+            saved = saved_inventory.get(asset, {})
+            actual = reconstructed_inventory.get(asset, (Decimal(0), Decimal(0)))
+            if (
+                number(saved.get("quantity", "0"), asset) != actual[0]
+                or number(saved.get("cost_usdt", "0"), asset) != actual[1]
+            ):
+                issue(
+                    "strategy_inventory_mismatch",
+                    "Позиция стратегии расходится с журналом исполнений",
+                    asset=asset,
+                )
     return {
         "status": "ok" if not issues else "error",
         "issues": [asdict(i) for i in issues],

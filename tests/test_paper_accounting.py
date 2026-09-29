@@ -32,6 +32,30 @@ def market(depth="10"):
     return opportunity, buy, sell
 
 
+def ltc_market(depth="10", symbol="LTC/USDT"):
+    now = int(time() * 1000)
+    opportunity = ArbitrageOpportunity(
+        "cross_venue_spread",
+        symbol,
+        Venue.BINANCE,
+        Venue.OKX,
+        Decimal("2"),
+        Decimal("1.75"),
+        Decimal("100"),
+        now,
+        fees_pct=Decimal("0.20"),
+        slippage_pct=Decimal("0.05"),
+        source_timestamp_ms=now,
+    )
+    buy = normalize_order_book(
+        Venue.BINANCE, symbol, [["99", depth]], [["100", depth]], now, now
+    )
+    sell = normalize_order_book(
+        Venue.OKX, symbol, [["102", depth]], [["103", depth]], now, now
+    )
+    return opportunity, buy, sell
+
+
 def service(path, usdt="10000", btc="10"):
     store = SQLitePaperStore(path)
     store.seed_account(balances={"USDT": Decimal(usdt), "BTC": Decimal(btc), "ETH": Decimal(0)})
@@ -164,3 +188,107 @@ def test_unpriced_holdings_are_disclosed_without_fabricated_equity(tmp_path):
     assert account["equity_usd"] is None
     assert account["unpriced_assets"] == ["BTC"]
     assert account["priced_equity_usd"] == "10000"
+
+
+def test_ltc_uses_same_atomic_paper_execution_and_reconciliation(tmp_path):
+    store = SQLitePaperStore(tmp_path / "ltc.db")
+    store.seed_account(
+        balances={
+            "USDT": Decimal("10000"),
+            "BTC": Decimal("0"),
+            "ETH": Decimal("0"),
+            "LTC": Decimal("10"),
+        }
+    )
+    instance = PersistentPaperService(store)
+    opportunity, buy, sell = ltc_market()
+
+    result = instance.execute(
+        opportunity,
+        buy,
+        sell,
+        notional_usd=Decimal("100"),
+        settings=Settings(_env_file=None),
+        idempotency_key="ltc-first",
+    )
+
+    assert result["status"] == "filled"
+    assert result["order"]["symbol"] == "LTC/USDT"
+    assert {fill["symbol"] for fill in result["fills"]} == {"LTC/USDT"}
+    assert instance.reconcile()["status"] == "ok"
+    assert instance.execute(
+        opportunity,
+        buy,
+        sell,
+        notional_usd=Decimal("100"),
+        settings=Settings(_env_file=None),
+        idempotency_key="ltc-first",
+    ) == result
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("usdt", "ltc"),
+    [("100", "10"), ("10000", "0.5")],
+)
+def test_ltc_requires_quote_and_base_without_negative_balances(tmp_path, usdt, ltc):
+    store = SQLitePaperStore(tmp_path / "ltc-insufficient.db")
+    store.seed_account(
+        balances={
+            "USDT": Decimal(usdt),
+            "BTC": Decimal("0"),
+            "ETH": Decimal("0"),
+            "LTC": Decimal(ltc),
+        }
+    )
+    instance = PersistentPaperService(store)
+    before = instance.account()["balances"]
+
+    result = instance.execute(
+        *ltc_market(),
+        notional_usd=Decimal("100"),
+        settings=Settings(_env_file=None),
+        idempotency_key=f"ltc-insufficient-{usdt}-{ltc}",
+    )
+
+    assert result["status"] == "rejected"
+    assert result["reason_code"] == "insufficient_paper_balance"
+    assert result["fills"] == []
+    assert instance.account()["balances"] == before
+    assert all(
+        Decimal(balance[field]) >= 0
+        for balance in instance.account()["balances"]
+        for field in ("available", "reserved")
+    )
+    assert instance.reconcile()["status"] == "ok"
+    store.close()
+
+
+@pytest.mark.parametrize("symbol", ["BTC/USD", "ETH/USDC", "LTC/BTC", "DOGE/USDT"])
+def test_persistent_paper_rejects_pairs_outside_exact_usdt_allowlist(tmp_path, symbol):
+    store = SQLitePaperStore(tmp_path / "unsupported.db")
+    store.seed_account(
+        balances={
+            "USDT": Decimal("10000"),
+            "BTC": Decimal("10"),
+            "ETH": Decimal("10"),
+            "LTC": Decimal("10"),
+            "DOGE": Decimal("1000"),
+        }
+    )
+    instance = PersistentPaperService(store)
+    before = instance.account()["balances"]
+
+    result = instance.execute(
+        *ltc_market(symbol=symbol),
+        notional_usd=Decimal("100"),
+        settings=Settings(_env_file=None),
+        idempotency_key=f"unsupported-{symbol}",
+    )
+
+    assert result["status"] == "rejected"
+    assert result["reason_code"] == "unsupported_market"
+    assert result["fills"] == []
+    assert instance.account()["balances"] == before
+    assert instance.reconcile()["status"] == "ok"
+    store.close()

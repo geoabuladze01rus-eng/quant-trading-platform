@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from quant_trading_platform.paper_trading.service import PersistentPaperService
 from quant_trading_platform.persistence import SQLitePaperStore, decimal_text
 
 
@@ -20,13 +21,148 @@ def test_initialization_seed_and_reopening_are_idempotent(tmp_path: Path) -> Non
     assert reopened.get_balance("paper-default", "USDT")["available"] == (  # type: ignore[index]
         "12.123456789123456789123456789")
     assert reopened.get_account("paper-default")["initial_balances"]["USDT"] == "10000"  # type: ignore[index]
-    assert len(reopened.list_balances("paper-default")) == 3
+    assert len(reopened.list_balances("paper-default")) == 4
     with reopened.transaction() as db:
         assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
         assert db.execute("SELECT typeof(available) FROM paper_balances").fetchone()[0] == "text"
     reopened.close()
+
+
+def test_existing_account_adds_ltc_balance_and_reconciliation_baseline_atomically(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "paper.db"
+    store = SQLitePaperStore(path)
+    original = {
+        "USDT": Decimal("9876.5"),
+        "BTC": Decimal("0.75"),
+        "ETH": Decimal("3.25"),
+    }
+    store.seed_account(balances=original)
+    with store.transaction() as db:
+        store.insert_order(
+            {
+                "id": "legacy-order",
+                "order_id": "legacy-order",
+                "symbol": "BTC/USDT",
+                "status": "rejected",
+                "filled_quantity": Decimal("0"),
+                "remaining_notional_usd": Decimal("25"),
+                "reserved_quote": Decimal("0"),
+                "reserved_base": Decimal("0"),
+            },
+            conn=db,
+        )
+        store.insert_audit(
+            {"id": "legacy-audit", "event_type": "paper_order_rejected"}, conn=db
+        )
+        assert store.reserve_idempotency(
+            "paper-default", "legacy-key", "legacy-hash", conn=db
+        )
+        store.complete_idempotency(
+            "paper-default", "legacy-key", {"order_id": "legacy-order"}, conn=db
+        )
+        for table in (
+            "paper_accounts",
+            "paper_balances",
+            "paper_orders",
+            "audit_events",
+            "idempotency_records",
+        ):
+            db.execute(f"UPDATE {table} SET schema_version=1")
+        db.execute("PRAGMA user_version=1")
+    legacy_order = store.get_order("legacy-order")
+    legacy_audit = store.get_audit("legacy-audit")
+    legacy_idempotency = store.get_idempotency("paper-default", "legacy-key")
+    store.close()
+
+    migrated = SQLitePaperStore(path)
+    migrated.seed_account(balances={**original, "LTC": Decimal("10")})
+    migrated.seed_account(
+        balances={
+            "USDT": Decimal("1"),
+            "BTC": Decimal("1"),
+            "ETH": Decimal("1"),
+            "LTC": Decimal("999"),
+        }
+    )
+    account = migrated.get_account("paper-default")
+    assert account is not None
+    assert account["initial_balances"]["LTC"] == "10"
+    assert account["initial_balances"]["USDT"] == "9876.5"
+    assert migrated.get_balance("paper-default", "LTC")["available"] == "10"  # type: ignore[index]
+    assert migrated.get_balance("paper-default", "USDT")["available"] == "9876.5"  # type: ignore[index]
+    assert len(migrated.list_balances("paper-default")) == 4
+    assert migrated.get_order("legacy-order") == legacy_order
+    assert migrated.get_audit("legacy-audit") == legacy_audit
+    migrated_idempotency = migrated.get_idempotency("paper-default", "legacy-key")
+    assert migrated_idempotency is not None and legacy_idempotency is not None
+    assert {
+        key: value for key, value in migrated_idempotency.items() if key != "schema_version"
+    } == {key: value for key, value in legacy_idempotency.items() if key != "schema_version"}
+    assert PersistentPaperService(migrated).reconcile()["status"] == "ok"
+    with migrated.transaction() as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        for table in (
+            "paper_accounts",
+            "paper_balances",
+            "paper_orders",
+            "audit_events",
+            "idempotency_records",
+        ):
+            assert not db.execute(
+                f"SELECT 1 FROM {table} WHERE schema_version != 2"
+            ).fetchall()
+    migrated.close()
+
+
+def test_ltc_backfill_rolls_back_balance_if_baseline_update_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SQLitePaperStore(tmp_path / "paper.db")
+    original = {"USDT": Decimal("10000"), "BTC": Decimal("1"), "ETH": Decimal("10")}
+    store.seed_account(balances=original)
+
+    def fail_account_update(*_args, **_kwargs):
+        raise RuntimeError("baseline unavailable")
+
+    monkeypatch.setattr(store, "upsert_account", fail_account_update)
+    with pytest.raises(RuntimeError, match="baseline unavailable"):
+        store.seed_account(balances={**original, "LTC": Decimal("10")})
+
+    account = store.get_account("paper-default")
+    assert account is not None and "LTC" not in account["initial_balances"]
+    assert store.get_balance("paper-default", "LTC") is None
+    store.close()
+
+
+def test_negative_ltc_seed_rolls_back_without_changing_existing_account(tmp_path: Path) -> None:
+    store = SQLitePaperStore(tmp_path / "paper.db")
+    original = {"USDT": Decimal("10000"), "BTC": Decimal("1"), "ETH": Decimal("10")}
+    store.seed_account(balances=original)
+    before = store.get_account("paper-default")
+
+    with pytest.raises(ValueError, match="negative"):
+        store.seed_account(balances={**original, "LTC": Decimal("-1")})
+
+    assert store.get_account("paper-default") == before
+    assert store.get_balance("paper-default", "LTC") is None
+    store.close()
+
+
+def test_seed_does_not_mask_missing_existing_balance_as_asset_migration(tmp_path: Path) -> None:
+    store = SQLitePaperStore(tmp_path / "paper.db")
+    store.seed_account()
+    with store.transaction() as db:
+        db.execute(
+            "DELETE FROM paper_balances WHERE account_id=? AND asset=?",
+            ("paper-default", "LTC"),
+        )
+    store.seed_account()
+    assert store.get_balance("paper-default", "LTC") is None
+    store.close()
 
 
 def test_all_entities_and_idempotency_survive_restart(tmp_path: Path) -> None:

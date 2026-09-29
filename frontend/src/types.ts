@@ -7,6 +7,9 @@ export interface DashboardSettings {
   max_daily_loss_pct: number;
   max_trade_notional_usd: number;
   min_expected_net_pct: number;
+  crypto_paper_robot_enabled?: boolean;
+  crypto_paper_robot_primary_venue?: string;
+  crypto_paper_directional_enabled?: boolean;
 }
 
 export interface Venue {
@@ -84,4 +87,29 @@ export interface AuditEvent {
   event: string;
   strategy: string;
   reason: string;
+}
+
+export interface RobotStatus {
+  state: string;
+  reason_code: string;
+  human_reason?: string;
+  enabled: boolean;
+  paper_only: true;
+  live_execution: false;
+  primary_venue: string;
+  strategy: string;
+  symbols: string[];
+  notional_limit_usdt?: string;
+  max_orders_per_day?: number;
+  last_checked_at?: string | null;
+  last_signal?: Record<string, unknown> | null;
+  last_result?: Record<string, unknown> | null;
+  directional_enabled?: boolean;
+  symbol_states?: Array<{
+    symbol: string;
+    state: string;
+    reason_code: string;
+    human_reason: string;
+    signal: Record<string, unknown> | null;
+  }>;
 }

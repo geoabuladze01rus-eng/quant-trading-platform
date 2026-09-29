@@ -77,15 +77,55 @@ curl http://127.0.0.1:8000/paper/residual-exposure
 curl 'http://127.0.0.1:8000/audit?limit=50&offset=0&event_type=paper_order_filled'
 ```
 
+## Crypto paper robot
+
+The disabled-by-default robot evaluates exactly `BTC/USDT`, `ETH/USDT`, and
+`LTC/USDT`. Each venue/pair has an independent health state. Missing, stale,
+future-dated, incomplete, or failed data blocks that pair without authorizing a
+trade from a cached book. Public venue rules supply price ticks, quantity steps,
+minimum quantities, and minimum notionals.
+
+A local paper spread is created only when its expected net edge remains positive
+and above the configured minimum after fees, configured slippage, and depth
+slippage. Rejected decisions are written to audit with a stable reason code.
+Account reconciliation mismatch, an open partial order, the daily loss limit, an
+insufficient prefunded leg, or an unsafe trading configuration blocks new orders.
+
+When `CRYPTO_PAPER_DIRECTIONAL_ENABLED=true`, the same robot may also open and
+close long-only local positions. The model has fixed 12/48 observation windows;
+it does not tune parameters from the current sample. Entry requires enough price
+history, positive expected edge after a 0.10% fee and 0.05% slippage estimate per
+side, and a walk-forward report with the configured minimum closed trades,
+positive average net result and bounded drawdown. Exit uses the same public depth.
+The persistent account keeps a separate strategy inventory and cost basis, so
+seed holdings cannot be sold or counted as robot P&L. No result is guaranteed.
+
+The robot is part of the FastAPI lifecycle; do not start a second worker against
+the same SQLite account. For a separate bounded test, use a separate database:
+
+```bash
+PAPER_DATABASE_PATH=/tmp/quant-crypto-paper-trial.sqlite3 \
+CRYPTO_PAPER_ROBOT_ENABLED=true \
+CRYPTO_PAPER_DIRECTIONAL_ENABLED=true \
+TRADING_MODE=paper LIVE_TRADING_ENABLED=false LIVE_ORDER_ACCEPTANCE_GATE=false \
+uvicorn quant_trading_platform.api.app:app --host 127.0.0.1 --port 8000
+```
+
+`GET /crypto/paper-robot` returns a decision state for every configured symbol.
+`GET /paper/performance` reports realized and unrealized P&L separately. Unknown
+marks or cost basis remain `null`; the dashboard must not label cash movement as
+profit.
+
 The older `/paper/orders/simulate` endpoint remains as a volatile compatibility
 simulation. It does not mutate the persistent virtual portfolio.
 
 ## Alpha limitations
 
-Initial non-USDT holdings have no mark until a validated paper fill supplies one.
-A fill may establish a valuation mark, but it never invents a cost basis for
-pre-funded inventory. Therefore unrealized P&L remains `null` while
+Initial non-USDT holdings may receive a public read-only midpoint valuation, but
+the system never invents their historical cost basis. Therefore total-account
+unrealized P&L remains `null` while
 `unpriced_pnl_assets` identifies the assets whose historical cost is unknown.
+Strategy unrealized P&L is reported separately from its own durable cost basis.
 Reported performance is hypothetical, not independently verified and never a promise
 of profit.
 

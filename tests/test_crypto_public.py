@@ -1,3 +1,4 @@
+from copy import deepcopy
 from decimal import Decimal
 
 import httpx
@@ -138,3 +139,192 @@ def test_timeout_and_malformed_response_sanitized(adapter: type[PublicCryptoConn
         pytest.raises(MarketDataError, match="request failed"),
     ):
         adapter(Settings(_env_file=None), http).get_order_book("BTCUSDT")
+
+
+INSTRUMENT_CASES = [
+    (
+        BinanceConnector,
+        "/api/v3/exchangeInfo",
+        {
+            "symbols": [
+                {
+                    "symbol": "LTCUSDT",
+                    "baseAsset": "LTC",
+                    "quoteAsset": "USDT",
+                    "status": "TRADING",
+                    "isSpotTradingAllowed": True,
+                    "filters": [
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                        {"filterType": "LOT_SIZE", "stepSize": "0.001", "minQty": "0.001"},
+                        {"filterType": "NOTIONAL", "minNotional": "5"},
+                    ],
+                }
+            ]
+        },
+        ("0.01", "0.001", "0.001", "5"),
+    ),
+    (
+        BybitConnector,
+        "/v5/market/instruments-info",
+        {
+            "retCode": 0,
+            "result": {
+                "list": [
+                    {
+                        "symbol": "LTCUSDT",
+                        "baseCoin": "LTC",
+                        "quoteCoin": "USDT",
+                        "status": "Trading",
+                        "priceFilter": {"tickSize": "0.01"},
+                        "lotSizeFilter": {
+                            "basePrecision": "0.00001",
+                            "minOrderQty": "0.00001",
+                            "minOrderAmt": "5",
+                        },
+                    }
+                ]
+            },
+        },
+        ("0.01", "0.00001", "0.00001", "5"),
+    ),
+    (
+        OKXConnector,
+        "/api/v5/public/instruments",
+        {
+            "code": "0",
+            "data": [
+                {
+                    "instId": "LTC-USDT",
+                    "baseCcy": "LTC",
+                    "quoteCcy": "USDT",
+                    "instType": "SPOT",
+                    "state": "live",
+                    "tickSz": "0.01",
+                    "lotSz": "0.000001",
+                    "minSz": "0.01",
+                }
+            ],
+        },
+        ("0.01", "0.000001", "0.01", None),
+    ),
+]
+
+
+@pytest.mark.parametrize("adapter,path,payload,expected", INSTRUMENT_CASES)
+def test_public_instrument_rules_are_normalized_without_quote_conversion(
+    adapter: type[PublicCryptoConnector],
+    path: str,
+    payload: dict[str, object],
+    expected: tuple[str, str, str, str | None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("quant_trading_platform.connectors.crypto.client._now_ms", lambda: 10000)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET" and request.url.path == path
+        assert not any(
+            name in request.headers
+            for name in (
+                "authorization",
+                "cookie",
+                "x-mbx-apikey",
+                "x-bapi-api-key",
+                "ok-access-key",
+            )
+        )
+        if adapter is BinanceConnector:
+            assert dict(request.url.params) == {"symbol": "LTCUSDT"}
+        elif adapter is BybitConnector:
+            assert dict(request.url.params) == {"category": "spot", "symbol": "LTCUSDT"}
+        else:
+            assert dict(request.url.params) == {"instType": "SPOT", "instId": "LTC-USDT"}
+        return httpx.Response(200, json=payload)
+
+    with httpx.Client(
+        transport=httpx.MockTransport(handle),
+        auth=("private", "secret"),
+        headers={
+            "X-MBX-APIKEY": "secret",
+            "X-BAPI-API-KEY": "secret",
+            "OK-ACCESS-KEY": "secret",
+        },
+        cookies={"session": "secret"},
+    ) as http:
+        rules = adapter(Settings(_env_file=None), http).get_instrument_rules("ltc-usdt")
+    assert rules.symbol == "LTC/USDT"
+    assert rules.venue == adapter.venue
+    assert rules.base_asset == "LTC" and rules.quote_asset == "USDT"
+    assert tuple(
+        None if value is None else str(value)
+        for value in (
+            rules.tick_size,
+            rules.quantity_step,
+            rules.min_quantity,
+            rules.min_notional,
+        )
+    ) == expected
+    assert rules.status == "trading" and rules.timestamp_ms == 10000
+    assert rules.source in {
+        "binance:exchangeInfo",
+        "bybit:instruments-info",
+        "okx:public-instruments",
+    }
+
+
+@pytest.mark.parametrize("adapter", [BinanceConnector, BybitConnector, OKXConnector])
+def test_instrument_discovery_rejects_unsupported_quote_before_network(
+    adapter: type[PublicCryptoConnector],
+) -> None:
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(lambda _: pytest.fail("network must not be called"))
+        ) as http,
+        pytest.raises(ValueError, match="Unsupported"),
+    ):
+        adapter(Settings(_env_file=None), http).get_instrument_rules("LTC/USDC")
+
+
+@pytest.mark.parametrize("adapter,path,payload,expected", INSTRUMENT_CASES)
+def test_instrument_discovery_rejects_unavailable_pair(
+    adapter: type[PublicCryptoConnector],
+    path: str,
+    payload: dict[str, object],
+    expected: tuple[str, str, str, str | None],
+) -> None:
+    del path, expected
+    unavailable = deepcopy(payload)
+    if adapter is BinanceConnector:
+        unavailable["symbols"][0]["status"] = "BREAK"  # type: ignore[index]
+    elif adapter is BybitConnector:
+        unavailable["result"]["list"][0]["status"] = "PendingOpen"  # type: ignore[index]
+    else:
+        unavailable["data"][0]["state"] = "suspend"  # type: ignore[index]
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json=unavailable))
+    with (
+        httpx.Client(transport=transport) as http,
+        pytest.raises(MarketDataError, match="unavailable"),
+    ):
+        adapter(Settings(_env_file=None), http).get_instrument_rules("LTC/USDT")
+
+
+@pytest.mark.parametrize("adapter,path,payload,expected", INSTRUMENT_CASES)
+def test_instrument_discovery_rejects_nonpositive_rule(
+    adapter: type[PublicCryptoConnector],
+    path: str,
+    payload: dict[str, object],
+    expected: tuple[str, str, str, str | None],
+) -> None:
+    del path, expected
+    invalid = deepcopy(payload)
+    if adapter is BinanceConnector:
+        invalid["symbols"][0]["filters"][0]["tickSize"] = "0"  # type: ignore[index]
+    elif adapter is BybitConnector:
+        invalid["result"]["list"][0]["priceFilter"]["tickSize"] = "NaN"  # type: ignore[index]
+    else:
+        invalid["data"][0]["tickSz"] = "-0.01"  # type: ignore[index]
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json=invalid))
+    with (
+        httpx.Client(transport=transport) as http,
+        pytest.raises(MarketDataError, match="tick size"),
+    ):
+        adapter(Settings(_env_file=None), http).get_instrument_rules("LTC/USDT")
