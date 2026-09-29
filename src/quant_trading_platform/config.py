@@ -55,6 +55,15 @@ class Settings(BaseSettings):
     crypto_paper_robot_notional_usdt: Decimal = Field(default=Decimal("10"), gt=0, le=100)
     crypto_paper_robot_max_orders_per_day: int = Field(default=6, ge=1, le=24)
     crypto_paper_robot_interval_seconds: int = Field(default=60, ge=30, le=3_600)
+    crypto_paper_directional_enabled: bool = False
+    crypto_paper_directional_fee_pct: Decimal = Field(default=Decimal("0.10"), ge=0, le=1)
+    crypto_paper_directional_slippage_pct: Decimal = Field(
+        default=Decimal("0.05"), ge=0, le=1
+    )
+    crypto_paper_directional_min_closed_trades: int = Field(default=2, ge=1, le=20)
+    crypto_paper_directional_max_drawdown_pct: Decimal = Field(
+        default=Decimal("2"), gt=0, le=10
+    )
 
     binance_api_key: str | None = Field(default=None, repr=False, exclude=True)
     binance_api_secret: str | None = Field(default=None, repr=False, exclude=True)

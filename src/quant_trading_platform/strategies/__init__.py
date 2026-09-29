@@ -4,3 +4,6 @@ from quant_trading_platform.strategies.arbitrage import (
 )
 
 __all__ = ["CrossVenueSpreadMonitor", "TriangularArbitrageDetector"]
+from .directional import DirectionalSignal, SignalSide, directional_signal
+
+__all__ = ["DirectionalSignal", "SignalSide", "directional_signal"]

@@ -140,6 +140,7 @@ def get_settings() -> dict[str, object]:
         "max_market_data_age_ms": settings.max_market_data_age_ms,
         "crypto_paper_robot_enabled": settings.crypto_paper_robot_enabled,
         "crypto_paper_robot_primary_venue": settings.crypto_paper_robot_primary_venue.value,
+        "crypto_paper_directional_enabled": settings.crypto_paper_directional_enabled,
     }
 
 
@@ -323,7 +324,12 @@ def crypto_paper_robot_status() -> dict[str, object]:
             "paper_only": True,
             "live_execution": False,
             "primary_venue": settings.crypto_paper_robot_primary_venue.value,
-            "strategy": "bybit_anchored_cross_venue_spread",
+            "strategy": (
+                "cross_venue_spread+momentum_mean_reversion"
+                if settings.crypto_paper_directional_enabled
+                else "bybit_anchored_cross_venue_spread"
+            ),
+            "directional_enabled": settings.crypto_paper_directional_enabled,
             "symbols": list(SUPPORTED_CRYPTO_SPOT_SYMBOLS),
             "last_signal": None,
             "last_result": None,
@@ -611,6 +617,8 @@ def paper_performance() -> dict[str, object]:
     service = _persistent_paper_service()
     account = service.account(settings.paper_account_id)
     orders = service.store.list_orders(settings.paper_account_id)
+    robot: CryptoPaperRobot | None = getattr(app.state, "crypto_paper_robot", None)
+    robot_snapshot = None if robot is None else robot.snapshot()
     return serialize_record(
         {
             "account_id": settings.paper_account_id,
@@ -620,6 +628,12 @@ def paper_performance() -> dict[str, object]:
             "daily_pnl_usdt": account["realized_pnl_usdt"],
             "fees_paid_usdt": account["fees_paid_usdt"],
             "slippage_cost_usdt": account["slippage_cost_usdt"],
+            "strategy_realized_pnl_usdt": account["strategy_realized_pnl_usdt"],
+            "strategy_unrealized_pnl_usdt": account["strategy_unrealized_pnl_usdt"],
+            "strategy_inventory": account["strategy_inventory"],
+            "strategy_by_symbol": (
+                [] if robot_snapshot is None else robot_snapshot.get("symbol_states", [])
+            ),
             "filled_orders": sum(order["status"] == "filled" for order in orders),
             "partially_filled_orders": sum(
                 order["status"] == "partially_filled" for order in orders
@@ -648,6 +662,8 @@ def paper_residual_exposure() -> dict[str, object]:
     observations: list[dict[str, object]] = []
     market_data: MarketDataService | None = getattr(app.state, "market_data", None)
     for order in orders:
+        if order.get("side", "spread") != "spread":
+            continue
         order_id = str(order["order_id"])
         source_fills = by_order.get(order_id, [])
         if not source_fills:

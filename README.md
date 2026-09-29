@@ -80,8 +80,16 @@ subtracts estimated fees and slippage, applies instrument sizing, account
 reconciliation, balance, per-trade and daily-loss gates, then writes only local
 paper orders and fills. It never calls an exchange order endpoint.
 
+An additional directional paper strategy is also disabled by default. It uses a
+fixed 12/48-observation momentum rule with a mean-reversion fallback and requires
+a positive, cost-adjusted walk-forward result before opening a position. A sell
+can close only inventory previously bought by this strategy; seeded BTC, ETH and
+LTC are never treated as strategy inventory. This is a test model, not a profit
+guarantee.
+
 ```bash
 CRYPTO_PAPER_ROBOT_ENABLED=true \
+CRYPTO_PAPER_DIRECTIONAL_ENABLED=true \
 TRADING_MODE=paper \
 LIVE_TRADING_ENABLED=false \
 LIVE_ORDER_ACCEPTANCE_GATE=false \

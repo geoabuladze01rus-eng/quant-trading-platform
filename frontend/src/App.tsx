@@ -39,15 +39,18 @@ function robotView(robot: RobotStatus | null) {
   if (state === 'needs_review') return { label: 'Нужна проверка', tone: 'warning', text: robot.human_reason ?? robot.reason_code };
   if (state === 'paused') return { label: 'На паузе', tone: 'warning', text: robot.human_reason ?? robot.reason_code };
   if (state === 'filled') return { label: 'Paper-сделка учтена', tone: 'positive', text: robot.human_reason ?? robot.reason_code };
-  if (state === 'scanning') return { label: 'Сканирует рынок', tone: 'positive', text: robot.human_reason ?? 'Ищет spread после fees и slippage.' };
+  if (state === 'scanning') return { label: 'Сканирует рынок', tone: 'positive', text: robot.human_reason ?? 'Проверяет spread и directional-сигналы после fees и slippage.' };
   if (state === 'disabled') return { label: 'Выключен', tone: 'neutral', text: robot.human_reason ?? 'Автоматические paper-сделки отключены.' };
   return { label: state, tone: 'neutral', text: robot.human_reason ?? robot.reason_code };
 }
 
-function PairCard({ symbol, venues, opportunities }: { symbol: string; venues: Venue[]; opportunities: Opportunity[] }) {
+function PairCard({ symbol, venues, opportunities, robot }: { symbol: string; venues: Venue[]; opportunities: Opportunity[]; robot: RobotStatus | null }) {
   const sources = CRYPTO_VENUES.map((name) => venues.find((venue) => venue.name === name && venue.symbol === symbol));
   const healthy = sources.filter((source) => source?.status === 'ok').length;
   const best = opportunities.filter((item) => item.symbol === symbol).sort((a, b) => b.expected_net_pct - a.expected_net_pct)[0];
+  const robotState = robot?.symbol_states?.find((item) => item.symbol === symbol);
+  const directionalSide = typeof robotState?.signal?.side === 'string' ? robotState.signal.side : null;
+  const directionalEdge = typeof robotState?.signal?.net_edge_pct === 'string' ? Number(robotState.signal.net_edge_pct) : null;
   return <article className="pair-card">
     <div className="pair-card-head">
       <div><span className="pair-code">{symbol}</span><small>Spot · USDT</small></div>
@@ -64,9 +67,10 @@ function PairCard({ symbol, venues, opportunities }: { symbol: string; venues: V
       })}
     </div>
     <div className="pair-signal">
-      <span>{best ? `${venueName(best.buy_venue)} → ${venueName(best.sell_venue)}` : 'Сигнал пока не сформирован'}</span>
-      <strong className={best?.approved ? 'value-positive' : best ? 'value-danger' : 'muted'}>{best ? pct(best.expected_net_pct) : '—'}</strong>
+      <span>{directionalSide ? `${venueName(robot?.primary_venue ?? '')} · ${directionalSide.toUpperCase()}` : best ? `${venueName(best.buy_venue)} → ${venueName(best.sell_venue)}` : 'Сигнал пока не сформирован'}</span>
+      <strong className={directionalSide ? 'value-positive' : best?.approved ? 'value-positive' : best ? 'value-danger' : 'muted'}>{directionalEdge !== null ? pct(directionalEdge, 4) : best ? pct(best.expected_net_pct) : '—'}</strong>
     </div>
+    {robotState && <p className="reason-line"><span>{robotState.state}</span>{robotState.human_reason}</p>}
   </article>;
 }
 
@@ -184,7 +188,7 @@ export function App() {
 
       <section id="markets">
         <div className="section-heading"><div><p className="eyebrow">Точный universe</p><h2>Spot-пары и venues</h2></div><span>Bid / Ask · read-only</span></div>
-        <div className="pair-grid">{PAIRS.map((symbol) => <PairCard key={symbol} symbol={symbol} venues={venues} opportunities={opportunities} />)}</div>
+        <div className="pair-grid">{PAIRS.map((symbol) => <PairCard key={symbol} symbol={symbol} venues={venues} opportunities={opportunities} robot={robot} />)}</div>
       </section>
 
       <section id="signals">

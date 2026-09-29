@@ -32,6 +32,12 @@ REASON_CATALOG = MappingProxyType({
     "paper_robot_open_order": "Есть незавершённая виртуальная заявка. Новая заявка запрещена.",
     "paper_robot_no_signal": "Сигнал после издержек слишком слабый для виртуальной сделки.",
     "paper_robot_halted": "Крипторобот остановлен до проверки состояния и сверки.",
+    "strategy_history_warmup": "Стратегия накапливает историю цен. Сделка пока запрещена.",
+    "strategy_no_signal": "Проверяемого торгового сигнала сейчас нет.",
+    "strategy_validation_failed": "Walk-forward проверка стратегии не прошла ограничения риска.",
+    "strategy_position_unavailable": "У стратегии нет собственной позиции для продажи.",
+    "strategy_position_open": "Позиция стратегии уже открыта; повторная покупка запрещена.",
+    "directional_signal_approved": "Сигнал и оценка результата после издержек прошли проверки.",
 })
 
 _ALIASES = {

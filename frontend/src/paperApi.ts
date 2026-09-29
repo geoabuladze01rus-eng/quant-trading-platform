@@ -6,7 +6,7 @@ export type Json = null | boolean | string | number | Json[] | { [key: string]: 
 export type Row = { [key: string]: Json };
 export type OrderStatus = 'preview' | 'created' | 'accepted' | 'partially_filled' | 'filled' | 'cancelled' | 'rejected' | 'failed';
 export type PaperOrder = Row & { id: string; symbol: string; status: OrderStatus; reason_code: string; human_reason: string; notional_usdt: string };
-export type Account = Row & { id: string; virtual_equity_usdt: string | null; realized_pnl_usdt: string; unrealized_pnl_usdt: string | null; fees_paid_usdt: string; slippage_cost_usdt: string };
+export type Account = Row & { id: string; virtual_equity_usdt: string | null; realized_pnl_usdt: string; unrealized_pnl_usdt: string | null; strategy_realized_pnl_usdt?: string; strategy_unrealized_pnl_usdt?: string | null; fees_paid_usdt: string; slippage_cost_usdt: string };
 export type Balance = Row & { asset: string; available: string; reserved: string; total: string };
 export type Reconciliation = Row & { status: 'ok' | 'error'; issues: Row[] };
 export interface CommandResult { order: PaperOrder; fills: Row[]; account: Account; balances: Balance[]; positions: Row[]; reconciliation: Reconciliation; explanation: Row; paper_only: true }
@@ -43,6 +43,8 @@ function account(value: unknown): Account {
   const v = object(value);
   required(v, ['id', 'status', 'created_at', 'updated_at'], ['realized_pnl_usdt', 'fees_paid_usdt', 'slippage_cost_usdt']);
   nullableDecimal(v.virtual_equity_usdt); nullableDecimal(v.unrealized_pnl_usdt);
+  if (v.strategy_realized_pnl_usdt !== undefined) decimal(v.strategy_realized_pnl_usdt);
+  if (v.strategy_unrealized_pnl_usdt !== undefined) nullableDecimal(v.strategy_unrealized_pnl_usdt);
   return v as Account;
 }
 function balance(value: unknown): Balance {

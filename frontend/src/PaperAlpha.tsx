@@ -127,6 +127,8 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge, a
   const orders = portfolio.orders.data ?? [];
   const fills = portfolio.fills.data ?? [];
   const approved = opportunities.filter((item) => item.approved);
+  const strategyRealized = account?.strategy_realized_pnl_usdt ?? account?.realized_pnl_usdt;
+  const strategyUnrealized = account?.strategy_unrealized_pnl_usdt ?? account?.unrealized_pnl_usdt;
   const portfolioErrors = Object.values(portfolio).map((item) => item.error).filter(Boolean);
 
   return <section className="paper-section" id="paper">
@@ -141,8 +143,8 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge, a
         <div className="card-icon"><CircleDollarSign size={21} /></div><small>Виртуальные деньги</small>
         <strong>{display(displayedFunds)} <em>USDT</em></strong><p>{fundsAreCashOnly ? 'Денежный остаток без оценки BTC, ETH и LTC.' : 'Не являются реальными средствами.'}</p>
       </article>
-      <article className="money-card"><small>Realized P&amp;L</small><strong className={Number(account?.realized_pnl_usdt ?? 0) >= 0 ? 'value-positive' : 'value-danger'}>{display(account?.realized_pnl_usdt)} USDT</strong><p>Закрытый paper-результат</p></article>
-      <article className="money-card"><small>Unrealized P&amp;L</small><strong>{display(account?.unrealized_pnl_usdt)} USDT</strong><p>По доступным mark prices</p></article>
+      <article className="money-card"><small>Strategy realized P&amp;L</small><strong className={Number(strategyRealized ?? 0) >= 0 ? 'value-positive' : 'value-danger'}>{display(strategyRealized)} USDT</strong><p>Только закрытые сделки робота</p></article>
+      <article className="money-card"><small>Strategy unrealized P&amp;L</small><strong>{display(strategyUnrealized)} USDT</strong><p>Без исходных BTC, ETH и LTC</p></article>
       <article className="money-card"><small>Fees + slippage</small><strong>{display(account?.fees_paid_usdt)} + {display(account?.slippage_cost_usdt)}</strong><p>Виртуальные расходы, USDT</p></article>
     </div>
 
@@ -162,6 +164,7 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge, a
           <div><dt>Filled orders</dt><dd>{display(performance?.filled_orders)}</dd></div>
           <div><dt>Rejected orders</dt><dd>{display(performance?.rejected_orders)}</dd></div>
           <div><dt>Open positions</dt><dd>{portfolio.positions.data?.filter((position) => position.status === 'open').length ?? '—'}</dd></div>
+          <div><dt>Directional model</dt><dd>{Array.isArray(performance?.strategy_by_symbol) ? `${performance.strategy_by_symbol.length} pairs` : '—'}</dd></div>
         </dl>
         {account && account.status !== 'active' && <div className="inline-alert danger">Account остановлен из-за accounting mismatch.</div>}
       </article>
@@ -172,7 +175,7 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge, a
       {orders.length ? orders.slice(0, 20).map((order) => {
         const orderFills = fills.filter((fill) => fill.order_id === order.id);
         return <article className="trade-card" key={order.id}>
-          <div className="trade-main"><div><strong>{order.symbol}</strong><span>{venueName(order.buy_venue)} <ArrowRight size={13} /> {venueName(order.sell_venue)}</span></div><div><small>Notional</small><strong>{order.notional_usdt} USDT</strong></div><span className={`state-chip ${order.status === 'filled' ? 'positive' : order.status === 'rejected' || order.status === 'failed' ? 'danger' : 'warning'}`}>{label(order.status)}</span></div>
+          <div className="trade-main"><div><strong>{order.symbol}</strong><span>{order.side === 'spread' ? <>{venueName(order.buy_venue)} <ArrowRight size={13} /> {venueName(order.sell_venue)}</> : `${venueName(order.venue)} · ${String(order.side).toUpperCase()}`}</span></div><div><small>Notional</small><strong>{order.notional_usdt} USDT</strong></div><span className={`state-chip ${order.status === 'filled' ? 'positive' : order.status === 'rejected' || order.status === 'failed' ? 'danger' : 'warning'}`}>{label(order.status)}</span></div>
           <p className="reason-line"><span>{order.status === 'rejected' ? 'Причина отказа' : 'Результат'}</span>{order.human_reason} · {order.reason_code}</p>
           <details><summary>Метрики, fills и идентификаторы</summary><Records records={[order, ...orderFills]} /></details>
           <div className="button-row"><button className="text-button" onClick={() => void getOrder(order.id).then(setDetail).catch(() => setMessage('Детали order недоступны.'))}>Проверить order</button>{['created', 'accepted', 'partially_filled'].includes(order.status) && <button className="text-button danger-text" disabled={busy || uncertain || !actionsEnabled} onClick={() => void mutate(undefined, order.id)}>Отменить остаток paper-order</button>}</div>

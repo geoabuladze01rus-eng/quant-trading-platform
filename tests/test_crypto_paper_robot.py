@@ -82,12 +82,16 @@ def robot(tmp_path, **overrides: object) -> tuple[CryptoPaperRobot, PersistentPa
     )
     service = PersistentPaperService(store)
     assert service.recover("crypto-trial")["status"] == "ok"
+    settings_values: dict[str, object] = {
+        "max_market_data_age_ms": 5_000,
+        **overrides,
+    }
     settings = Settings(
         _env_file=None,
         paper_account_id="crypto-trial",
         crypto_paper_robot_enabled=True,
         crypto_paper_robot_interval_seconds=30,
-        **overrides,
+        **settings_values,
     )
     return CryptoPaperRobot(settings, service, PersistentAuditLog(store)), service
 
@@ -190,3 +194,35 @@ def test_live_configuration_halts_without_touching_account(tmp_path):
     assert result["state"] == "halted"
     assert result["reason_code"] == "live_trading_locked"
     assert service.store.list_orders() == service.store.list_fills() == []
+
+
+def test_validated_directional_signal_uses_same_persistent_paper_ledger(tmp_path):
+    instance, service = robot(
+        tmp_path,
+        crypto_paper_directional_enabled=True,
+        crypto_paper_directional_min_closed_trades=1,
+        crypto_paper_directional_max_drawdown_pct=Decimal("10"),
+    )
+    now_ms = int(time() * 1000)
+    book = normalize_order_book(
+        Venue.BYBIT,
+        "BTC/USDT",
+        [["160.00", "20"]],
+        [["160.01", "20"]],
+        now_ms,
+        now_ms,
+    )
+    markets = Markets({(Venue.BYBIT, "BTC/USDT"): book}, now_ms)
+    instance._price_history["BTC/USDT"] = [
+        Decimal(100 + index) for index in range(60)
+    ]
+
+    result = instance.run_once(markets, now_ms=now_ms)
+
+    assert result["state"] == "filled"
+    assert result["last_signal"]["side"] == "buy"
+    orders = service.store.list_orders("crypto-trial")
+    fills = service.store.list_fills("crypto-trial")
+    assert len(orders) == len(fills) == 1
+    assert orders[0]["side"] == fills[0]["side"] == "buy"
+    assert service.reconcile("crypto-trial")["status"] == "ok"

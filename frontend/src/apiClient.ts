@@ -69,6 +69,7 @@ export function getSettings(): Promise<DashboardSettings> {
       min_expected_net_pct: number(v.min_expected_net_pct),
       crypto_paper_robot_enabled: v.crypto_paper_robot_enabled === undefined ? undefined : boolean(v.crypto_paper_robot_enabled),
       crypto_paper_robot_primary_venue: v.crypto_paper_robot_primary_venue === undefined ? undefined : string(v.crypto_paper_robot_primary_venue),
+      crypto_paper_directional_enabled: v.crypto_paper_directional_enabled === undefined ? undefined : boolean(v.crypto_paper_directional_enabled),
     };
   });
 }
@@ -85,9 +86,17 @@ export function getRobotStatus(): Promise<RobotStatus> {
       symbols: v.symbols.map(string),
       notional_limit_usdt: v.notional_limit_usdt === undefined ? undefined : string(v.notional_limit_usdt),
       max_orders_per_day: v.max_orders_per_day === undefined ? undefined : number(v.max_orders_per_day),
-      last_checked_at: v.last_checked_at === undefined || v.last_checked_at === null ? null : number(v.last_checked_at),
+      last_checked_at: v.last_checked_at === undefined || v.last_checked_at === null ? null : string(v.last_checked_at),
       last_signal: v.last_signal === undefined || v.last_signal === null ? null : record(v.last_signal),
       last_result: v.last_result === undefined || v.last_result === null ? null : record(v.last_result),
+      directional_enabled: v.directional_enabled === undefined ? undefined : boolean(v.directional_enabled),
+      symbol_states: v.symbol_states === undefined ? undefined : list(v.symbol_states, (item) => {
+        const state = record(item);
+        return {
+          symbol: string(state.symbol), state: string(state.state), reason_code: string(state.reason_code),
+          human_reason: string(state.human_reason), signal: state.signal === null ? null : record(state.signal),
+        };
+      }),
     };
   });
 }

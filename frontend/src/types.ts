@@ -9,6 +9,7 @@ export interface DashboardSettings {
   min_expected_net_pct: number;
   crypto_paper_robot_enabled?: boolean;
   crypto_paper_robot_primary_venue?: string;
+  crypto_paper_directional_enabled?: boolean;
 }
 
 export interface Venue {
@@ -100,7 +101,15 @@ export interface RobotStatus {
   symbols: string[];
   notional_limit_usdt?: string;
   max_orders_per_day?: number;
-  last_checked_at?: number | null;
+  last_checked_at?: string | null;
   last_signal?: Record<string, unknown> | null;
   last_result?: Record<string, unknown> | null;
+  directional_enabled?: boolean;
+  symbol_states?: Array<{
+    symbol: string;
+    state: string;
+    reason_code: string;
+    human_reason: string;
+    signal: Record<string, unknown> | null;
+  }>;
 }
