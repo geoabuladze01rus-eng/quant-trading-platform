@@ -93,10 +93,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         paper_store.close()
 
 
+LOCAL_UI_ORIGINS = tuple(
+    f"http://{host}:{port}"
+    for host in ("localhost", "127.0.0.1")
+    for port in (5173, 5174, 5175)
+)
+
+
 app = FastAPI(title="Quant Trading Platform", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=list(LOCAL_UI_ORIGINS),
     allow_methods=["GET", "POST"],
     allow_headers=["Accept", "Content-Type", "Idempotency-Key"],
 )
@@ -358,10 +365,7 @@ class PersistentPaperOrderRequest(BaseModel):
 
 def _trusted_paper_origin(request: Request) -> None:
     origin = request.headers.get("origin")
-    if origin is not None and origin not in (
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ):
+    if origin is not None and origin not in LOCAL_UI_ORIGINS:
         raise HTTPException(403, "Untrusted browser origin")
 
 

@@ -113,6 +113,11 @@ async def test_local_frontend_can_read_api(client: httpx.AsyncClient) -> None:
     response = await client.get("/venues", headers={"Origin": "http://localhost:5173"})
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 
+    fallback_port = await client.get(
+        "/paper/account", headers={"Origin": "http://127.0.0.1:5175"}
+    )
+    assert fallback_port.headers["access-control-allow-origin"] == "http://127.0.0.1:5175"
+
 
 @pytest.mark.asyncio
 async def test_paper_flag_cannot_advertise_live_unlock(
