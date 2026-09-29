@@ -121,6 +121,9 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge, a
   const account = portfolio.account.data;
   const performance = portfolio.performance.data;
   const balances = portfolio.balances.data ?? [];
+  const cashBalance = balances.find((item) => item.asset === 'USDT');
+  const displayedFunds = account?.virtual_equity_usdt ?? cashBalance?.total;
+  const fundsAreCashOnly = account?.virtual_equity_usdt === null && !!cashBalance;
   const orders = portfolio.orders.data ?? [];
   const fills = portfolio.fills.data ?? [];
   const approved = opportunities.filter((item) => item.approved);
@@ -136,7 +139,7 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge, a
     <div className="money-grid">
       <article className="money-card primary-money">
         <div className="card-icon"><CircleDollarSign size={21} /></div><small>Виртуальные деньги</small>
-        <strong>{display(account?.virtual_equity_usdt)} <em>USDT</em></strong><p>Не являются реальными средствами.</p>
+        <strong>{display(displayedFunds)} <em>USDT</em></strong><p>{fundsAreCashOnly ? 'Денежный остаток без оценки BTC, ETH и LTC.' : 'Не являются реальными средствами.'}</p>
       </article>
       <article className="money-card"><small>Realized P&amp;L</small><strong className={Number(account?.realized_pnl_usdt ?? 0) >= 0 ? 'value-positive' : 'value-danger'}>{display(account?.realized_pnl_usdt)} USDT</strong><p>Закрытый paper-результат</p></article>
       <article className="money-card"><small>Unrealized P&amp;L</small><strong>{display(account?.unrealized_pnl_usdt)} USDT</strong><p>По доступным mark prices</p></article>
