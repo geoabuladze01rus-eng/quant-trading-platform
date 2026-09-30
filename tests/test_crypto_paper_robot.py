@@ -213,8 +213,16 @@ def test_validated_directional_signal_uses_same_persistent_paper_ledger(tmp_path
         now_ms,
     )
     markets = Markets({(Venue.BYBIT, "BTC/USDT"): book}, now_ms)
+    # The validation gate needs a naturally closed cycle, not a terminal mark.
     instance._price_history["BTC/USDT"] = [
-        Decimal(100 + index) for index in range(60)
+        Decimal(value)
+        for value in (
+            [100] * 48
+            + list(range(100, 151))
+            + list(range(150, 139, -1))
+            + [140] * 48
+            + list(range(140, 161))
+        )
     ]
 
     result = instance.run_once(markets, now_ms=now_ms)
@@ -226,3 +234,29 @@ def test_validated_directional_signal_uses_same_persistent_paper_ledger(tmp_path
     assert len(orders) == len(fills) == 1
     assert orders[0]["side"] == fills[0]["side"] == "buy"
     assert service.reconcile("crypto-trial")["status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    "stage", ["_sample_prices", "_update_marks", "_account_gate", "_daily_orders"]
+)
+def test_accounting_cycle_error_latches_halt(tmp_path, monkeypatch, stage):
+    instance, service = robot(tmp_path)
+    now_ms = int(time() * 1000)
+    markets = market("BTC/USDT", now_ms)
+    original = getattr(instance, stage)
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("Injected accounting cycle failure")
+
+    monkeypatch.setattr(instance, stage, fail)
+    result = instance.run_once(markets, now_ms=now_ms)
+    assert result["state"] == "halted"
+    assert result["reason_code"] == "paper_robot_halted"
+    assert all(row["state"] == "halted" for row in result["symbol_states"])
+    assert service.store.list_orders() == service.store.list_fills() == []
+
+    monkeypatch.setattr(instance, stage, original)
+    later = now_ms + 30_000
+    result = instance.run_once(market("BTC/USDT", later), now_ms=later)
+    assert result["state"] == "halted"
+    assert service.store.list_orders() == service.store.list_fills() == []

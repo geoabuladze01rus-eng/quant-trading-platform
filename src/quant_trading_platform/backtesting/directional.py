@@ -75,11 +75,13 @@ def walk_forward(
         peak = max(peak, equity)
         if peak:
             max_drawdown = max(max_drawdown, (peak - equity) / peak * 100)
-    if quantity > 0:
-        cash = quantity * prices[-1] * (1 - one_way_cost)
-        trade_returns.append((cash / entry_cash - 1) * 100)
-    strategy_return = cash - Decimal(100)
-    buy_hold = (prices[-1] / prices[0] - 1) * 100 - (fee_pct + slippage_pct) * 2
+    # Mark the remaining position; valuation is not a closed strategy trade.
+    terminal_equity = cash + quantity * prices[-1] * (1 - one_way_cost)
+    strategy_return = terminal_equity - Decimal(100)
+    buy_hold = (
+        prices[-1] / (prices[0] * (1 + one_way_cost))
+        * (1 - one_way_cost) - 1
+    ) * 100
     wins = sum(value > 0 for value in trade_returns)
     closed = len(trade_returns)
     return WalkForwardReport(

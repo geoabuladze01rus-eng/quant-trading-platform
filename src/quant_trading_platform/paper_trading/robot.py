@@ -632,29 +632,29 @@ class CryptoPaperRobot:
             self.state, self.last_reason_code = "halted", "paper_robot_halted"
             self._set_all_symbols("halted", "paper_robot_halted")
             return self.snapshot()
-        self._sample_prices(market_data, timestamp)
-        if (
-            timestamp - self._last_attempt_ms
-            < self.settings.crypto_paper_robot_interval_seconds * 1000
-        ):
-            return self.snapshot()
-        self._last_attempt_ms = timestamp
-        self._update_marks(market_data, timestamp)
-        gate = self._account_gate(timestamp)
-        if gate is not None:
-            self.state = (
-                "halted"
-                if gate in ("paper_robot_halted", "reconciliation_mismatch")
-                else "paused"
-            )
-            self.last_reason_code = gate
-            self._set_all_symbols(self.state, gate)
-            return self.snapshot()
-        if self._daily_orders(timestamp) >= self.settings.crypto_paper_robot_max_orders_per_day:
-            self.state, self.last_reason_code = "paused", "paper_robot_rate_limit"
-            self._set_all_symbols("paused", "paper_robot_rate_limit")
-            return self.snapshot()
         try:
+            self._sample_prices(market_data, timestamp)
+            if (
+                timestamp - self._last_attempt_ms
+                < self.settings.crypto_paper_robot_interval_seconds * 1000
+            ):
+                return self.snapshot()
+            self._last_attempt_ms = timestamp
+            self._update_marks(market_data, timestamp)
+            gate = self._account_gate(timestamp)
+            if gate is not None:
+                self.state = (
+                    "halted"
+                    if gate in ("paper_robot_halted", "reconciliation_mismatch")
+                    else "paused"
+                )
+                self.last_reason_code = gate
+                self._set_all_symbols(self.state, gate)
+                return self.snapshot()
+            if self._daily_orders(timestamp) >= self.settings.crypto_paper_robot_max_orders_per_day:
+                self.state, self.last_reason_code = "paused", "paper_robot_rate_limit"
+                self._set_all_symbols("paused", "paper_robot_rate_limit")
+                return self.snapshot()
             candidates = self._opportunities(market_data, timestamp)
             if not candidates:
                 if self.settings.crypto_paper_directional_enabled:

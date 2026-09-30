@@ -68,7 +68,7 @@ function PairCard({ symbol, venues, opportunities, robot }: { symbol: string; ve
     </div>
     <div className="pair-signal">
       <span>{directionalSide ? `${venueName(robot?.primary_venue ?? '')} · ${directionalSide.toUpperCase()}` : best ? `${venueName(best.buy_venue)} → ${venueName(best.sell_venue)}` : 'Сигнал пока не сформирован'}</span>
-      <strong className={directionalSide ? 'value-positive' : best?.approved ? 'value-positive' : best ? 'value-danger' : 'muted'}>{directionalEdge !== null ? pct(directionalEdge, 4) : best ? pct(best.expected_net_pct) : '—'}</strong>
+      <strong className={directionalSide ? (directionalSide === 'buy' && directionalEdge !== null && directionalEdge > 0 ? 'value-positive' : 'muted') : best?.approved ? 'value-positive' : best ? 'value-danger' : 'muted'}>{directionalEdge !== null ? pct(directionalEdge, 4) : best ? pct(best.expected_net_pct) : '—'}</strong>
     </div>
     {robotState && <p className="reason-line"><span>{robotState.state}</span>{robotState.human_reason}</p>}
   </article>;
@@ -163,8 +163,8 @@ export function App() {
       </header>
 
       <section className={`system-notice ${unsafe ? 'danger' : failures.length ? 'warning' : 'positive'}`} role={unsafe || failures.length ? 'alert' : 'status'}>
-        <div><strong>{unsafe ? 'Safety state не подтверждён — paper-действия заблокированы' : failures.length ? 'Часть данных временно недоступна' : isMockMode ? 'Демонстрационный режим' : 'Все критические paper-проверки пройдены'}</strong>
-          <p>{unsafe ? 'Backend сообщил небезопасную конфигурацию.' : failures.length ? `${failures.join(' · ')}. Остальные read-only карточки продолжают работать.` : `Обновлено ${updatedAt || '—'} · автоматическое обновление каждые 10 секунд.`}</p></div>
+        <div><strong>{unsafe ? 'Safety state не подтверждён — paper-действия заблокированы' : failures.length ? 'Часть данных временно недоступна' : isMockMode ? 'Демонстрационный режим' : 'Статусы получены — решение зависит от данных и risk gates'}</strong>
+          <p>{unsafe ? 'Backend сообщил небезопасную конфигурацию.' : failures.length ? `${failures.join(' · ')}. Остальные read-only карточки продолжают работать.` : `Обновлено ${updatedAt || '—'} · загрузка статусов не подтверждает разрешение на сделку.`}</p></div>
         <span>{healthyBooks}/9 книг доступны</span>
       </section>
 

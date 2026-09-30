@@ -79,18 +79,40 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge, a
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(timer); }, []);
   useEffect(() => {
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     if (!paperConfigured) return () => { active = false; };
-    setPortfolio(initialSections());
-    void Promise.all([
-      section(getPaperAccount(), 'Account недоступен'), section(getPaperBalances(), 'Balances недоступны'),
-      section(getSavedPaperOrders(), 'Сделки недоступны'), section(getSavedPaperFills(), 'Fills недоступны'),
-      section(getPaperPositions(), 'Positions недоступны'), section(getPaperPerformance(), 'P&L недоступен'),
-      section(getPaperReconciliation(), 'Reconciliation недоступен'),
-    ]).then(([account, balances, orders, fills, positions, performance, reconciliation]) => {
-      if (active) setPortfolio({ account, balances, orders, fills, positions, performance, reconciliation });
-    });
-    void section(getResidualExposure(), 'Residual exposure недоступен').then((value) => { if (active) setResiduals(value); });
-    return () => { active = false; };
+
+    async function loadPortfolio() {
+      if (!active) return;
+      setPreview(null);
+      setPortfolio(initialSections());
+      setResiduals(pending());
+      const [
+        account, balances, orders, fills, positions, performance,
+        reconciliation, residualExposure,
+      ] = await Promise.all([
+        section(getPaperAccount(), 'Account недоступен'),
+        section(getPaperBalances(), 'Balances недоступны'),
+        section(getSavedPaperOrders(), 'Сделки недоступны'),
+        section(getSavedPaperFills(), 'Fills недоступны'),
+        section(getPaperPositions(), 'Positions недоступны'),
+        section(getPaperPerformance(), 'P&L недоступен'),
+        section(getPaperReconciliation(), 'Reconciliation недоступен'),
+        section(getResidualExposure(), 'Residual exposure недоступен'),
+      ]);
+      if (!active) return;
+      setPortfolio({
+        account, balances, orders, fills, positions, performance, reconciliation,
+      });
+      setResiduals(residualExposure);
+      timer = setTimeout(() => void loadPortfolio(), 10000);
+    }
+
+    void loadPortfolio();
+    return () => {
+      active = false;
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, [revision]);
   useEffect(() => { if (preview) dialog.current?.showModal(); else if (dialog.current?.open) dialog.current.close(); }, [preview]);
 
