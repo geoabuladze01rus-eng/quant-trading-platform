@@ -115,3 +115,6 @@ strength candidates for BTC/USDT, ETH/USDT and LTC/USDT. The background poller
 uses only completed UTC daily candles; unavailable or stale data returns no
 candidate. These signals never create orders or promise profits. See
 [OKX spot research](docs/OKX_SPOT_RESEARCH.md) for rules and backtest limitations.
+For multi-year public history and a cost-aware comparison with BTC hold and cash,
+run `python scripts/run_spot_research.py --days 1460` in an environment with
+access to OKX. This report does not enable automated paper execution.

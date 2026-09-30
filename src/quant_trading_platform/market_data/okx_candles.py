@@ -40,29 +40,33 @@ class OKXCandleSource:
             raise ValueError("OKX public daily candles unavailable") from None
         if not isinstance(payload, dict) or payload.get("code") != "0":
             raise ValueError("OKX public daily candles unavailable")
-        rows = payload.get("data")
-        if not isinstance(rows, list):
-            raise ValueError("Malformed OKX daily candles")
-        candles: list[DailyCandle] = []
-        try:
-            for raw in rows:
-                if not isinstance(raw, list) or len(raw) != 9 or raw[8] not in ("0", "1"):
-                    raise ValueError("Malformed OKX daily candle")
-                if raw[8] != "1":
-                    continue
-                values = cast(list[str], raw)
-                if not all(isinstance(value, str) for value in values):
-                    raise ValueError("Malformed OKX daily candle")
-                candles.append(DailyCandle(
-                    int(values[0]), *(Decimal(value) for value in values[1:6]),
-                ))
-        except (InvalidOperation, TypeError, ValueError):
-            raise ValueError("Malformed OKX daily candles") from None
-        candles.sort(key=lambda item: item.timestamp_ms)
+        result = parse_completed_rows(payload.get("data"))
         # The latest candle must be yesterday in UTC. Exclude current incomplete bar.
         # A missing day or a mixed bar timezone fails the entire research snapshot.
-        if candles and candles[-1].timestamp_ms > now_ms - DAY_MS:
+        if result and result[-1].timestamp_ms > now_ms - DAY_MS:
             raise ValueError("Incomplete OKX daily candle")
-        result = tuple(candles)
         validate_candles(result, now_ms=now_ms)
         return result
+
+
+def parse_completed_rows(rows: object) -> tuple[DailyCandle, ...]:
+    """Parse one public OKX page without trusting its order or an open candle."""
+    if not isinstance(rows, list):
+        raise ValueError("Malformed OKX daily candles")
+    candles: list[DailyCandle] = []
+    try:
+        for raw in rows:
+            if not isinstance(raw, list) or len(raw) != 9 or raw[8] not in ("0", "1"):
+                raise ValueError("Malformed OKX daily candle")
+            if raw[8] != "1":
+                continue
+            values = cast(list[str], raw)
+            if not all(isinstance(value, str) for value in values):
+                raise ValueError("Malformed OKX daily candle")
+            candles.append(DailyCandle(
+                int(values[0]), *(Decimal(value) for value in values[1:6]),
+            ))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError("Malformed OKX daily candles") from None
+    candles.sort(key=lambda item: item.timestamp_ms)
+    return tuple(candles)

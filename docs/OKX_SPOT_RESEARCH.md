@@ -24,13 +24,30 @@ The two research rules are deliberately simple and **not optimized**:
 Use `replay_trend` in `backtesting/spot.py` with a **continuous historical daily
 candle series** for an exploratory next-open replay. It uses `Decimal`, buys at
 the following day's open with explicit slippage and fees, caps each entry at
-50% of marked portfolio value, and models no intraday stops. Defaults of 0.35%
-per side and 0.10% slippage per side are deliberately conservative examples,
+50% of marked portfolio value, records each simulated trade and models no
+intraday stops. Defaults of 0.35% fees, 0.10% spread and 0.10% slippage per side
+are deliberately conservative examples,
 not the user's account-specific OKX tariff. The latest public candle endpoint
 only provides a short sample and is insufficient to establish a durable edge.
 For any performance claim, use several years of historical bars, test unseen
 periods, compare to buy-and-hold and cash, and then run a forward paper test.
 Verify actual fee tier and conversion costs separately.
+
+`OKXHistorySource` pages through the public history endpoint with a bounded
+number of requests, and rejects gaps or unconfirmed candles. From an environment
+that can reach OKX, run `python scripts/run_spot_research.py --days 1460`. The
+report compares long-only weekly 30/60-day rotation, individual trend replays,
+a 50%-allocated BTC hold and cash. It reports a holdout period beginning at 70%
+of the sample using historical warmup and reset capital. Parameters are fixed,
+not selected on the test period. The output contains a simulated trade journal.
+No real performance result is included in the source tree; CI tests synthetic
+fixtures, not a live venue's historical fills.
+
+The existing persistent paper executor is **paired-spread-only**: its accounting
+requires matching buy and sell legs and its realized-PnL rule equates PnL to
+USDT cash flow. A directional spot buy does not satisfy either invariant. Do not
+route these spot signals through `/paper/orders`; this requires a separately
+reviewed directional ledger and reconciliation before automatic paper execution.
 
 These candidates do not authorize an order. In particular, this research module
 does not bypass the existing paper risk gates or the permanent live-execution
