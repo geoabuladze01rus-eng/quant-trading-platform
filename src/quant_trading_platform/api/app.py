@@ -6,6 +6,7 @@ from dataclasses import asdict, replace
 from decimal import Decimal
 from hashlib import sha256
 from time import time
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -29,6 +30,7 @@ from quant_trading_platform.models import (
 )
 from quant_trading_platform.paper_trading import PaperExecutionEngine
 from quant_trading_platform.paper_trading.models import PaperCommandError
+from quant_trading_platform.paper_trading.okx_spot import OKXSpotPaperService
 from quant_trading_platform.paper_trading.residual_exposure import (
     PaperLegEvent,
     assess_leg_events,
@@ -43,6 +45,8 @@ from quant_trading_platform.strategies.arbitrage import CrossVenueSpreadMonitor
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     assert_safe_startup(settings)
+    if settings.okx_spot_paper_account_id == settings.paper_account_id:
+        raise ValueError("OKX spot paper account must be separate from spread account")
     paper_store = SQLitePaperStore(settings.paper_database_path)
     paper_store.seed_account(
         settings.paper_account_id,
@@ -55,9 +59,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.paper_store = paper_store
     app.state.paper_service = PersistentPaperService(paper_store)
+    spot_account = paper_store.seed_account(
+        settings.okx_spot_paper_account_id,
+        {"USDT": settings.okx_spot_paper_initial_usdt,
+         "BTC": Decimal(0), "ETH": Decimal(0), "LTC": Decimal(0)},
+    )
+    if spot_account.get("account_kind") not in (None, "okx_spot"):
+        raise ValueError("OKX spot account has an incompatible kind")
+    if spot_account.get("account_kind") is None and paper_store.list_orders(
+        settings.okx_spot_paper_account_id
+    ):
+        raise ValueError("Existing paper orders cannot be relabelled as OKX spot")
+    paper_store.upsert_account(
+        settings.okx_spot_paper_account_id, {"account_kind": "okx_spot"}
+    )
+    app.state.okx_spot_service = OKXSpotPaperService(paper_store)
     app.state.persistent_audit = PersistentAuditLog(paper_store)
     # A durable paper account must pass accounting reconciliation before new commands.
     app.state.paper_recovery = app.state.paper_service.recover(settings.paper_account_id)
+    app.state.okx_spot_recovery = app.state.okx_spot_service.recover(
+        settings.okx_spot_paper_account_id
+    )
     service = None
     if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
         service = MultiMarketDataService(
@@ -82,6 +104,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _LAST_SIGNALS.clear()
         app.state.market_data = None
         app.state.paper_service = None
+        app.state.okx_spot_service = None
+        app.state.okx_spot_recovery = None
         app.state.persistent_audit = None
         app.state.paper_recovery = None
         app.state.paper_store = None
@@ -310,6 +334,18 @@ class PersistentPaperOrderRequest(BaseModel):
     symbol: str = Field(min_length=3, max_length=32)
     buy_venue: Venue
     sell_venue: Venue
+    notional_usdt: Decimal = Field(gt=0, max_digits=24, decimal_places=12)
+
+    @field_validator("symbol")
+    @classmethod
+    def canonical_symbol(cls, value: str) -> str:
+        return normalize_symbol(value)
+
+
+class OKXSpotPaperRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    symbol: str = Field(min_length=3, max_length=32)
+    side: Literal["buy", "sell"]
     notional_usdt: Decimal = Field(gt=0, max_digits=24, decimal_places=12)
 
     @field_validator("symbol")
@@ -547,6 +583,39 @@ def serialize_record(record: dict[str, object]) -> dict[str, object]:
 @app.get("/paper/account")
 def paper_account() -> dict[str, object]:
     return serialize_record(_persistent_paper_service().account(settings.paper_account_id))
+
+
+@app.get("/paper/okx/account")
+def okx_spot_paper_account() -> dict[str, object]:
+    service: OKXSpotPaperService | None = getattr(app.state, "okx_spot_service", None)
+    if service is None:
+        raise HTTPException(503, "OKX spot paper service is unavailable")
+    return serialize_record(service.account(settings.okx_spot_paper_account_id))
+
+
+@app.post("/paper/okx/orders")
+async def create_okx_spot_paper_order(
+    body: OKXSpotPaperRequest,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+) -> dict[str, object]:
+    _trusted_paper_origin(request)
+    service: OKXSpotPaperService | None = getattr(app.state, "okx_spot_service", None)
+    if service is None:
+        raise HTTPException(503, "OKX spot paper service is unavailable")
+    market_data: MarketDataService | MultiMarketDataService | None = getattr(
+        app.state, "market_data", None
+    )
+    book = None if market_data is None else market_data.book_for_simulation(Venue.OKX, body.symbol)
+    try:
+        result = service.execute_spot(
+            symbol=body.symbol, side=body.side, notional_usdt=body.notional_usdt,
+            book=book, settings=settings, idempotency_key=idempotency_key,
+            account_id=settings.okx_spot_paper_account_id,
+        )
+    except PaperCommandError as error:
+        raise _paper_command_http_error(error) from error
+    return serialize_record(result)
 
 
 @app.get("/paper/balances")

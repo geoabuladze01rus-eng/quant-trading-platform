@@ -45,6 +45,9 @@ def reconcile_records(
     fill_quantities: dict[tuple[str, str], Decimal] = defaultdict(lambda: Decimal(0))
     fees = Decimal(0)
     slippage = Decimal(0)
+    spot_inventory: dict[str, tuple[Decimal, Decimal]] = {}
+    spot_pnl = Decimal(0)
+    spot_daily_pnl = Decimal(0)
     for fill in fills:
         order_id = str(fill["order_id"])
         if order_id not in by_order:
@@ -77,6 +80,49 @@ def reconcile_records(
         fees += fee
         slippage += reserve_cost
         fill_quantities[(order_id, side)] += quantity
+    if account.get("account_kind") == "okx_spot":
+        # Storage returns newest first. Rebuild the acquired inventory and its
+        # average cost in durable insertion order, independent of account metadata.
+        for fill in reversed(fills):
+            order_id = str(fill["order_id"])
+            base = str(fill["symbol"]).split("/")[0]
+            quantity = number(fill["quantity"], order_id)
+            notional = number(fill["notional_usd"], order_id)
+            costs = number(fill.get("fee_usd", "0"), order_id) + number(
+                fill.get("slippage_cost_usd", "0"), order_id
+            )
+            held, basis = spot_inventory.get(base, (Decimal(0), Decimal(0)))
+            if fill["side"] == "buy":
+                spot_inventory[base] = (held + quantity, basis + notional + costs)
+            elif fill["side"] == "sell":
+                if quantity > held or held <= 0:
+                    issue("unfunded_spot_sale", "Продажа превышает купленный актив", order_id)
+                    continue
+                sold_basis = basis * quantity / held
+                realized = notional - costs - sold_basis
+                spot_pnl += realized
+                try:
+                    fill_day = datetime.fromtimestamp(
+                        int(number(fill["timestamp_ms"], order_id)) / 1000, UTC
+                    ).date().isoformat()
+                except (OverflowError, ValueError):
+                    issue("invalid_fill_time", "Некорректное время исполнения", order_id)
+                    fill_day = None
+                if fill_day == account.get("spot_day_utc"):
+                    spot_daily_pnl += realized
+                spot_inventory[base] = (held - quantity, basis - sold_basis)
+        saved_inventory = account.get("spot_inventory", {})
+        for asset in set(spot_inventory) | set(saved_inventory):
+            quantity, basis = spot_inventory.get(asset, (Decimal(0), Decimal(0)))
+            saved = saved_inventory.get(asset, {})
+            if quantity != number(saved.get("quantity", "0")) or basis != number(
+                saved.get("cost_usdt", "0")
+            ):
+                issue("spot_inventory_mismatch", "Учётная стоимость актива расходится", asset=asset)
+        if account.get("spot_day_utc") and spot_daily_pnl != number(
+            account.get("spot_daily_pnl_usdt", "0")
+        ):
+            issue("spot_daily_pnl_mismatch", "Дневной результат расходится")
     for order in orders:
         order_id = str(order["order_id"])
         base = str(order["symbol"]).split("/")[0]
@@ -89,13 +135,17 @@ def reconcile_records(
             issue("closed_order_reservation", "Закрытый ордер удерживает резерв", order_id)
         bought = fill_quantities[(order_id, "buy")]
         sold = fill_quantities[(order_id, "sell")]
-        if order["status"] in ("accepted", "partially_filled", "filled") and not bought:
+        spot_order = order.get("strategy") == "okx_spot_paper"
+        filled = bought if order.get("side") == "buy" else sold if spot_order else bought
+        if order["status"] in ("accepted", "partially_filled", "filled") and not filled:
             issue("order_without_fills", "Принятый ордер не содержит исполнений", order_id)
-        if bought != sold:
+        if spot_order and (bought and sold or not (bought or sold) and order["status"] == "filled"):
+            issue("invalid_spot_legs", "Некорректные стороны спотового исполнения", order_id)
+        elif not spot_order and bought != sold:
             issue("unmatched_spread_legs", "Объёмы двух исполненных сторон не совпадают", order_id)
-        if bought != number(order.get("filled_quantity", "0"), order_id):
+        if filled != number(order.get("filled_quantity", "0"), order_id):
             issue("order_fill_mismatch", "Объём ордера расходится с исполнениями", order_id)
-        if order["status"] in ("rejected", "failed", "created", "accepted") and bought:
+        if order["status"] in ("rejected", "failed", "created", "accepted") and filled:
             issue("order_status_mismatch", "Статус ордера не соответствует исполнениям", order_id)
         remaining = number(order.get("remaining_notional_usd", "0"), order_id)
         if order["status"] == "filled" and remaining != 0:
@@ -138,7 +188,10 @@ def reconcile_records(
     if "slippage_paid_usd" in account and number(account["slippage_paid_usd"]) != slippage:
         issue("slippage_total_mismatch", "Резерв проскальзывания расходится с исполнениями")
     if initial and "realized_pnl_usd" in account:
-        pnl = expected["USDT"] - number(initial.get("USDT", "0"))
+        pnl = (
+            spot_pnl if account.get("account_kind") == "okx_spot"
+            else expected["USDT"] - number(initial.get("USDT", "0"))
+        )
         if number(account["realized_pnl_usd"]) != pnl:
             issue("realized_pnl_mismatch", "Реализованный результат расходится с денежным потоком")
     return {

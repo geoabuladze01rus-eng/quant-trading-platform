@@ -75,6 +75,34 @@ cannot make a last-known LTC price executable. The persistent paired-spread
 paper command accepts LTC/USDT with a separately funded virtual LTC balance.
 This is still manual paper execution across two venues; no autonomous spot
 strategy or unattended order runner is enabled.
+
+### OKX spot paper commands
+
+The separate `okx-spot-paper` virtual account starts with 10,000 USDT and no
+crypto. A local client may submit a single manual paper buy or sell against a
+fresh public OKX order book. The first supported pairs are BTC/USDT, ETH/USDT
+and LTC/USDT. An `Idempotency-Key` is mandatory. The request supplies intent
+only; prices, depth, a fixed paper fee estimate (0.10%) and slippage reserve
+(0.05%) are server-owned. The full requested quote amount must fit observed
+depth and the configured $100 per-order cap. Purchases are additionally limited
+to 5% of starting USDT per asset and 10% overall by default. A sale can use only
+inventory bought inside this separate virtual account. New commands stop when
+realized losses for the UTC day reach 2% of starting USDT by default. Open
+position losses are not included in that gate, so this is not yet suitable for
+unattended trading.
+
+```bash
+curl -X POST http://127.0.0.1:8000/paper/okx/orders \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: replace-with-a-new-uuid' \
+  -d '{"symbol":"LTC/USDT","side":"buy","notional_usdt":"10"}'
+curl http://127.0.0.1:8000/paper/okx/account
+```
+
+The transaction atomically saves balances, one fill, position, audit event,
+reconciliation snapshot and idempotency response. No autonomous signal loop,
+news filter, real OKX order transport, or unattended deployment is included.
+The API remains local and unauthenticated; keep it bound to loopback.
 No trading keys are required. `/venues` distinguishes `no_data`, `stale`, `error`,
 and `disabled`; only fresh normalized books can reach the paper engine. T-Invest
 remains sandbox/read-only and is never mixed into crypto execution.
