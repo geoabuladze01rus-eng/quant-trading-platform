@@ -19,7 +19,9 @@ from quant_trading_platform.connectors.crypto import BinanceConnector, BybitConn
 from quant_trading_platform.explainability import explain_opportunity, explain_paper_execution
 from quant_trading_platform.explainability.reasons import human_reason
 from quant_trading_platform.market_data.models import NormalizedOrderBook
+from quant_trading_platform.market_data.okx_candles import OKXCandleSource
 from quant_trading_platform.market_data.service import MarketDataService
+from quant_trading_platform.market_data.spot_signal_service import SpotSignalService
 from quant_trading_platform.models import (
     ArbitrageOpportunity,
     MarketQuote,
@@ -68,16 +70,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             on_update=record_detected_opportunities,
         )
     app.state.market_data = service
+    spot_service = None
+    if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
+        spot_service = SpotSignalService(OKXCandleSource())
+    app.state.spot_signals = spot_service
     try:
         if service is not None:
             await service.start()
+        if spot_service is not None:
+            await spot_service.start()
         yield
     finally:
+        if spot_service is not None:
+            await spot_service.stop()
         if service is not None:
             await service.stop()
         _QUOTE_CACHE.clear()
         _LAST_SIGNALS.clear()
         app.state.market_data = None
+        app.state.spot_signals = None
         app.state.paper_service = None
         app.state.persistent_audit = None
         app.state.paper_recovery = None
@@ -152,6 +163,16 @@ def venues() -> list[dict[str, object]]:
             "bid": None, "ask": None, "timestamp_source": None,
             "depth_status": "unavailable", "bid_levels": 0, "ask_levels": 0,
         }]
+
+
+@app.get("/strategies/spot-signals")
+def spot_signals() -> dict[str, object]:
+    """Read-only cached candidates; never fetch or send orders in a GET request."""
+    service: SpotSignalService | None = getattr(app.state, "spot_signals", None)
+    if service is None:
+        return {"status": "disabled", "paper_only": True, "live_execution": False,
+                "signals": [], "reason": "Публичные данные OKX отключены."}
+    return service.snapshot()
 
 
 @app.get("/opportunities")
