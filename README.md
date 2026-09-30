@@ -107,3 +107,11 @@ Further reading: [architecture](docs/ARCHITECTURE.md),
 [safety gates](docs/SAFETY_GATES.md), [roadmap](docs/ROADMAP.md),
 [read-only market data](docs/READ_ONLY_MARKET_DATA.md), and
 [competitor lessons](docs/COMPETITOR_LESSONS.md).
+
+## OKX spot research
+
+`GET /strategies/spot-signals` exposes cached, read-only daily trend and relative
+strength candidates for BTC/USDT, ETH/USDT and LTC/USDT. The background poller
+uses only completed UTC daily candles; unavailable or stale data returns no
+candidate. These signals never create orders or promise profits. See
+[OKX spot research](docs/OKX_SPOT_RESEARCH.md) for rules and backtest limitations.

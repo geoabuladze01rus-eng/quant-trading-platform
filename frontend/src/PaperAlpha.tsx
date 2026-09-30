@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { cancelOrder, createOrder, getAuditPage, getOrder, getPortfolio, getResidualExposure, paperConfigured, previewOrder } from './paperApi';
-import type { CommandResult, Json, PaperOrder, Portfolio, ResidualObservation, Row } from './paperApi';
+import { cancelOrder, createOrder, getAuditPage, getOrder, getPortfolio, getResidualExposure, getSpotSignals, paperConfigured, previewOrder } from './paperApi';
+import type { CommandResult, Json, PaperOrder, Portfolio, ResidualObservation, Row, SpotSignals } from './paperApi';
 import type { AuditEvent, Opportunity, Venue } from './types';
 import { simulationBlock } from './PaperExecution';
 
@@ -23,6 +23,7 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge }:
   const [now, setNow] = useState(Date.now()), [revision, setRevision] = useState(0);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [residuals, setResiduals] = useState<ResidualObservation[] | null>(null);
+  const [spotSignals, setSpotSignals] = useState<SpotSignals | null>(null);
   const [residualError, setResidualError] = useState('');
   const [busy, setBusy] = useState(false), [message, setMessage] = useState('');
   const busyRef = useRef(false);
@@ -34,6 +35,7 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge }:
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 100); return () => clearInterval(timer); }, []);
   useEffect(() => { let active = true; setPortfolio(null); if (paperConfigured) void getPortfolio().then((value) => { if (active) setPortfolio(value); }).catch((cause) => { if (active) setMessage(String(cause.message)); }); return () => { active = false; }; }, [revision]);
   useEffect(() => { let active = true; setResiduals(null); if (paperConfigured) void getResidualExposure().then((value) => { if (active) { setResiduals(value); setResidualError(''); } }).catch(() => { if (active) setResidualError('Residual review unavailable. Paper preview is paused.'); }); return () => { active = false; }; }, [revision]);
+  useEffect(() => { let active = true; setSpotSignals(null); if (paperConfigured) void getSpotSignals().then((value) => { if (active) setSpotSignals(value); }).catch(() => { if (active) setSpotSignals({ status: 'unavailable', reason: 'Нет проверенных данных OKX.', paper_only: true, live_execution: false, signals: [] }); }); return () => { active = false; }; }, [revision]);
   useEffect(() => { if (preview) dialog.current?.showModal(); else dialog.current?.close(); }, [preview]);
   async function showPreview(item: Opportunity) {
     if (busyRef.current || simulationBlock(item, venues, Date.now() - receivedAt, maxAge) || !portfolio || !residuals || residuals.some((row) => row.decision.status !== 'flat') || uncertain) return;
@@ -63,6 +65,16 @@ export function PaperAlpha({ opportunities, venues, audit, receivedAt, maxAge }:
       {portfolio.account.status !== 'active' && <p role="alert">Paper account is halted after an accounting mismatch. New paper orders are blocked until the ledger is repaired.</p>}
       {Array.isArray(portfolio.account.unpriced_pnl_assets) && portfolio.account.unpriced_pnl_assets.length > 0 && <p role="status">Unrealized PnL is unavailable for initial inventory with unknown cost basis. The asset list is shown in Advanced accounting.</p>}
       <Records records={portfolio.reconciliation.issues} /></>}
+    <section aria-label="OKX spot research">
+      <h3>OKX Spot · исследовательские сигналы</h3>
+      <p>Только закрытые дневные свечи BTC, ETH и LTC. Сигналы не создают заявки и не подтверждают прибыльность стратегии.</p>
+      <p role="status">{spotSignals ? `${spotSignals.status}: ${spotSignals.reason}` : 'Данные ожидаются.'}</p>
+      {spotSignals?.signals.map((signal) => <article className="paper-opportunity" key={`${signal.strategy}-${signal.symbol}`}>
+        <strong>{signal.symbol} · {signal.strategy} · {signal.action}</strong>
+        <p>{signal.human_reason} · {signal.reason_code}</p>
+        <small>Свеча UTC: {new Date(signal.candle_timestamp_ms).toISOString().slice(0, 10)} · close {signal.close} USDT · reference {signal.reference}</small>
+      </article>)}
+    </section>
     <section className="residual-review" aria-label="Residual exposure review">
       <h3>Остаточная экспозиция · PAPER ONLY</h3>
       <p>Реальные деньги не используются. Live locked. Защитный paper-хедж здесь не исполняется автоматически.</p>
