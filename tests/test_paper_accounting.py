@@ -44,6 +44,23 @@ def execute(instance, *, key="first", depth="10", amount="100"):
     )
 
 
+def test_ltc_paper_spread_is_funded_and_reconciled(tmp_path):
+    opportunity, buy, sell = market()
+    opportunity = replace(opportunity, symbol="LTC/USDT")
+    buy = replace(buy, symbol="LTC/USDT")
+    sell = replace(sell, symbol="LTC/USDT")
+    store = SQLitePaperStore(tmp_path / "ltc.db")
+    store.seed_account(balances={"USDT": Decimal("10000"), "LTC": Decimal("10")})
+    result = PersistentPaperService(store).execute(
+        opportunity, buy, sell, notional_usd=Decimal("100"),
+        settings=Settings(_env_file=None), idempotency_key="ltc-pair",
+    )
+    assert result["status"] == "filled"
+    assert {fill["symbol"] for fill in result["fills"]} == {"LTC/USDT"}
+    assert PersistentPaperService(store).reconcile()["status"] == "ok"
+    store.close()
+
+
 def test_funded_execution_reconciles_fills_fees_reserve_and_equity(tmp_path):
     instance = service(tmp_path / "paper.db")
     result = execute(instance)

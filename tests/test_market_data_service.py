@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from quant_trading_platform.market_data.models import NormalizedOrderBook, normalize_order_book
-from quant_trading_platform.market_data.service import MarketDataService
+from quant_trading_platform.market_data.service import MarketDataService, MultiMarketDataService
 from quant_trading_platform.models import MarketQuote, Venue
 
 
@@ -28,6 +28,23 @@ class Source:
 
     def close(self) -> None:
         self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_multiple_okx_pairs_are_independent() -> None:
+    cache: dict[tuple[str, str], MarketQuote] = {}
+    btc_source, ltc_source = Source(Venue.OKX), Source(Venue.OKX)
+    btc = MarketDataService([btc_source], cache, symbol="BTC/USDT", clock=lambda: 10_000)
+    ltc = MarketDataService([ltc_source], cache, symbol="LTC/USDT", clock=lambda: 10_000)
+    service = MultiMarketDataService([btc, ltc])
+    await asyncio.gather(btc.poll_once(), ltc.poll_once())
+    assert set(cache) == {("okx", "BTC/USDT"), ("okx", "LTC/USDT")}
+    assert service.book_for_simulation(Venue.OKX, "LTC-USDT") is not None
+    assert service.book_for_simulation(Venue.OKX, "ETH/USDT") is None
+    ltc_source.error = True
+    await ltc.poll_once()
+    assert set(cache) == {("okx", "BTC/USDT")}
+    assert [row["status"] for row in service.snapshot()] == ["ok", "error"]
 
 
 @pytest.mark.asyncio

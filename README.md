@@ -68,6 +68,13 @@ partial-fill, recovery, and limitation details.
 ## Public data and Docker
 
 FastAPI lifespan starts independent public REST pollers for Binance, Bybit and OKX.
+By default each venue observes BTC/USDT, ETH/USDT and LTC/USDT. Set
+`MARKET_DATA_SYMBOLS=BTC/USDT,ETH/USDT,LTC/USDT` to choose up to ten unique USDT
+spot pairs. Each symbol has an independent freshness state; a failed LTC feed
+cannot make a last-known LTC price executable. The persistent paired-spread
+paper command accepts LTC/USDT with a separately funded virtual LTC balance.
+This is still manual paper execution across two venues; no autonomous spot
+strategy or unattended order runner is enabled.
 No trading keys are required. `/venues` distinguishes `no_data`, `stale`, `error`,
 and `disabled`; only fresh normalized books can reach the paper engine. T-Invest
 remains sandbox/read-only and is never mixed into crypto execution.
