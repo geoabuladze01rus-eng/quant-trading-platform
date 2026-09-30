@@ -19,7 +19,7 @@ from quant_trading_platform.connectors.crypto import BinanceConnector, BybitConn
 from quant_trading_platform.explainability import explain_opportunity, explain_paper_execution
 from quant_trading_platform.explainability.reasons import human_reason
 from quant_trading_platform.market_data.models import NormalizedOrderBook
-from quant_trading_platform.market_data.service import MarketDataService
+from quant_trading_platform.market_data.service import MarketDataService, MultiMarketDataService
 from quant_trading_platform.models import (
     ArbitrageOpportunity,
     MarketQuote,
@@ -50,6 +50,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "USDT": settings.paper_initial_usdt,
             "BTC": settings.paper_initial_btc,
             "ETH": settings.paper_initial_eth,
+            "LTC": settings.paper_initial_ltc,
         },
     )
     app.state.paper_store = paper_store
@@ -59,13 +60,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.paper_recovery = app.state.paper_service.recover(settings.paper_account_id)
     service = None
     if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
-        service = MarketDataService(
-            [BinanceConnector(settings), BybitConnector(settings), OKXConnector(settings)],
-            _QUOTE_CACHE,
-            symbol=settings.market_data_symbol,
-            interval_seconds=settings.market_data_poll_interval_seconds,
-            max_age_ms=settings.max_market_data_age_ms,
-            on_update=record_detected_opportunities,
+        service = MultiMarketDataService(
+            [MarketDataService(
+                [BinanceConnector(settings), BybitConnector(settings), OKXConnector(settings)],
+                _QUOTE_CACHE,
+                symbol=symbol,
+                interval_seconds=settings.market_data_poll_interval_seconds,
+                max_age_ms=settings.max_market_data_age_ms,
+                on_update=record_detected_opportunities,
+            ) for symbol in configured_market_symbols()]
         )
     app.state.market_data = service
     try:
@@ -103,6 +106,15 @@ _QUOTE_CACHE: dict[tuple[str, str], MarketQuote] = {}
 _LAST_SIGNALS: dict[tuple[str, str, str], str] = {}
 
 
+def configured_market_symbols() -> tuple[str, ...]:
+    symbols = tuple(normalize_symbol(item) for item in settings.market_data_symbols.split(","))
+    if not 1 <= len(symbols) <= 10 or len(set(symbols)) != len(symbols):
+        raise ValueError("Configure one to ten unique market data symbols")
+    if any(not symbol.endswith("/USDT") for symbol in symbols):
+        raise ValueError("Only USDT spot pairs are supported")
+    return symbols
+
+
 def now_ms() -> int:
     return int(time() * 1000)
 
@@ -128,7 +140,9 @@ def get_settings() -> dict[str, object]:
 
 @app.get("/venues")
 def venues() -> list[dict[str, object]]:
-    service: MarketDataService | None = getattr(app.state, "market_data", None)
+    service: MarketDataService | MultiMarketDataService | None = getattr(
+        app.state, "market_data", None
+    )
     disabled = (
         not settings.public_market_data_enabled
         or settings.market_scope == MarketScope.RUSSIAN_STOCKS
