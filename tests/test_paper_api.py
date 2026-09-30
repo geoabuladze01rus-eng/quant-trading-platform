@@ -203,6 +203,7 @@ async def test_post_browser_origins_and_only_paper_route(client: httpx.AsyncClie
         "/paper/orders/simulate",
         "/paper/orders/preview",
         "/paper/orders",
+        "/paper/okx/orders",
         "/paper/orders/{order_id}/cancel",
     }
     assert all(

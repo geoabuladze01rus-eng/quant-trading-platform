@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     paper_initial_btc: Decimal = Field(default=Decimal("1"), ge=0)
     paper_initial_eth: Decimal = Field(default=Decimal("10"), ge=0)
     paper_initial_ltc: Decimal = Field(default=Decimal("10"), ge=0)
+    okx_spot_paper_account_id: str = Field(default="okx-spot-paper", min_length=1, max_length=128)
+    okx_spot_paper_initial_usdt: Decimal = Field(default=Decimal("10000"), ge=0)
+    okx_spot_max_asset_pct: Decimal = Field(default=Decimal("5"), gt=0, le=10)
+    okx_spot_max_total_pct: Decimal = Field(default=Decimal("10"), gt=0, le=20)
     paper_algorithm_version: str = Field(default="paper-alpha-v1", min_length=1, max_length=64)
 
     binance_api_key: str | None = Field(default=None, repr=False, exclude=True)
