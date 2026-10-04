@@ -13,6 +13,37 @@ export interface CommandResult { order: PaperOrder; fills: Row[]; account: Accou
 export interface Portfolio { account: Account; balances: Balance[]; orders: PaperOrder[]; fills: Row[]; positions: Row[]; performance: Row; reconciliation: Reconciliation }
 export interface ResidualDecision extends Row { status: 'flat' | 'hedge_required' | 'halted'; reason_code: string; human_reason: string; residual_quantity: string; residual_notional_usd: string | null; mark_source: string | null; mark_age_ms: number | null; configured_cap_usd: string; filled_leg: string; hedge_side: string | null; reason_not_executed: string; hedge_proposal: Row | null; paper_only: true; live_execution: false }
 export interface ResidualObservation extends Row { execution_group_id: string; symbol: string; decision: ResidualDecision; paper_only: true; live_execution: false }
+export interface SpotSignal extends Row { strategy: string; symbol: string; action: string; reason_code: string; human_reason: string; candle_timestamp_ms: number; close: string; reference: string }
+export interface SpotSignals { status: string; reason: string; paper_only: true; live_execution: false; signals: SpotSignal[] }
+export interface AutoPaperSnapshot { robot: Row; account: Account; orders: Row[]; fills: Row[]; reconciliation: Reconciliation }
+
+export async function getAutomaticPaper(): Promise<AutoPaperSnapshot> {
+  const [robot, portfolio, history] = await Promise.all([
+    request('/paper/okx/robot', (value) => {
+      const v = object(value);
+      required(v, ['status', 'reason_code', 'human_reason', 'account_id']);
+      if (v.paper_only !== true || v.live_execution !== false || typeof v.worker_running !== 'boolean' || typeof v.enabled !== 'boolean') throw new Error('Unsafe robot state');
+      if (!['running', 'blocked', 'disabled', 'waiting', 'paused'].includes(text(v.status))) throw new Error('Unknown robot state');
+      for (const key of ['orders_count', 'fills_count']) if (typeof v[key] !== 'number' || !Number.isInteger(v[key]) || Number(v[key]) < 0) throw new Error('Invalid robot count');
+      return v;
+    }),
+    request('/paper/okx/account', account),
+    request('/paper/okx/history?limit=20', (value) => {
+      const v = object(value);
+      if (v.paper_only !== true || v.live_execution !== false) throw new Error('Unsafe history');
+      return { accountId: text(v.account_id), orders: rows(v.orders, object), fills: rows(v.fills, object), reconciliation: reconciliation(v.accounting_reconciliation) };
+    }),
+  ]);
+  if (robot.account_id !== portfolio.account_id || robot.account_id !== history.accountId) throw new Error('Paper account mismatch');
+  return { robot, account: portfolio, ...history };
+}
+
+export const controlAutomaticPaper = (action: 'pause' | 'resume', key: string) => request('/paper/okx/robot/control', (value) => {
+  const v = object(value);
+  if (v.paper_only !== true || v.live_execution !== false || v.action !== action || typeof v.paused !== 'boolean') throw new Error('Invalid paper control response');
+  required(v, ['account_id', 'reason_code', 'human_reason']);
+  return v;
+}, { action }, key);
 
 function object(value: unknown): Row {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected object');
@@ -131,6 +162,21 @@ export function getResidualExposure(): Promise<ResidualObservation[]> {
       if (row.paper_only !== true || row.live_execution !== false) throw new Error('Unsafe observation');
       return { ...row, decision: residualDecision(row.decision) } as ResidualObservation;
     });
+  });
+}
+export function getSpotSignals(): Promise<SpotSignals> {
+  return request('/strategies/spot-signals', (value) => {
+    const v = object(value);
+    if (v.paper_only !== true || v.live_execution !== false) throw new Error('Unsafe research view');
+    required(v, ['status', 'reason']);
+    const signals = rows(v.signals, (item) => {
+      const row = object(item);
+      required(row, ['strategy', 'symbol', 'action', 'reason_code', 'human_reason'], ['close', 'reference']);
+      if (typeof row.candle_timestamp_ms !== 'number' || !Number.isInteger(row.candle_timestamp_ms)) throw new Error('Invalid candle date');
+      return row as SpotSignal;
+    });
+    if (v.status !== 'ok' && signals.length) throw new Error('Stale research cannot show signals');
+    return { status: v.status as string, reason: v.reason as string, paper_only: true, live_execution: false, signals };
   });
 }
 export function getAuditPage(offset: number, filters: { event_type?: string; order_id?: string; reason_code?: string; correlation_id?: string } = {}) {

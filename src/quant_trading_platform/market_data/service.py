@@ -147,3 +147,27 @@ class MarketDataService:
             self._task = None
             for source in self.sources:
                 source.close()
+
+
+class MultiMarketDataService:
+    """One independently polled, bounded service per symbol."""
+
+    def __init__(self, services: Sequence[MarketDataService]) -> None:
+        if not services or len({service.symbol for service in services}) != len(services):
+            raise ValueError("Market data symbols must be unique and nonempty")
+        self.services = tuple(services)
+        self.by_symbol = {service.symbol: service for service in services}
+
+    def book_for_simulation(self, venue: Venue, symbol: str) -> NormalizedOrderBook | None:
+        service = self.by_symbol.get(normalize_symbol(symbol))
+        return None if service is None else service.book_for_simulation(venue, symbol)
+
+    def snapshot(self) -> list[dict[str, object]]:
+        return [entry for service in self.services for entry in service.snapshot()]
+
+    async def start(self) -> None:
+        for service in self.services:
+            await service.start()
+
+    async def stop(self) -> None:
+        await asyncio.gather(*(service.stop() for service in self.services))

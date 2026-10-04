@@ -19,7 +19,7 @@ class PaperOrderStatus(StrEnum):
 
 
 OPEN_STATUSES = frozenset(("created", "accepted", "partially_filled"))
-ASSETS = ("USDT", "BTC", "ETH")
+ASSETS = ("USDT", "BTC", "ETH", "LTC")
 
 
 @dataclass(frozen=True)
