@@ -23,8 +23,11 @@ def reconcile_records(
     def issue(
         code: str, text: str, correlation: str | None = None, asset: str | None = None
     ) -> None:
-        issues.append(ReconciliationIssue(code, text, asset or correlation or "account",
-                                           timestamp, "error", correlation))
+        issues.append(
+            ReconciliationIssue(
+                code, text, asset or correlation or "account", timestamp, "error", correlation
+            )
+        )
 
     def number(value: Any, correlation: str | None = None) -> Decimal:
         try:
@@ -37,6 +40,13 @@ def reconcile_records(
             return Decimal(0)
 
     initial = account.get("initial_balances", {})
+    if account.get("account_kind") == "okx_spot" and any(
+        asset != "USDT" and number(value) != 0 for asset, value in initial.items()
+    ):
+        issue(
+            "unexpected_spot_seed_inventory",
+            "Спотовый счёт должен начинать с нулевого количества монет",
+        )
     expected = defaultdict(
         lambda: Decimal(0), {asset: number(value) for asset, value in initial.items()}
     )
@@ -64,6 +74,32 @@ def reconcile_records(
         if min(quantity, notional, fee, reserve_cost) < 0:
             issue("negative_fill", "Исполнение содержит отрицательные значения", order_id)
         order = by_order.get(order_id, {})
+        if account.get("account_kind") == "okx_spot":
+            price = number(fill.get("price"), order_id)
+            if (
+                quantity <= 0
+                or notional <= 0
+                or price <= 0
+                or (quantity > 0 and price != notional / quantity)
+            ):
+                issue(
+                    "spot_fill_price_mismatch",
+                    "Цена и объём спотового исполнения расходятся",
+                    order_id,
+                )
+            if (
+                fill.get("venue") != "okx"
+                or fill.get("symbol") not in ("BTC/USDT", "ETH/USDT", "LTC/USDT")
+                or fill.get("side") != order.get("side")
+                or order.get("strategy") != "okx_spot_paper"
+                or fill.get("symbol") != order.get("symbol")
+                or fill.get("account_id") != account.get("id")
+            ):
+                issue(
+                    "spot_fill_identity_mismatch",
+                    "Исполнение не соответствует спотовому ордеру",
+                    order_id,
+                )
         fee_rate = fill.get("fee_rate_pct", order.get("fee_rate_pct"))
         if fee_rate is None:
             issue("missing_fee_rate", "Не сохранена ставка комиссии исполнения", order_id)
@@ -90,23 +126,28 @@ def reconcile_records(
             base = str(fill["symbol"]).split("/")[0]
             quantity = number(fill["quantity"], order_id)
             notional = number(fill["notional_usd"], order_id)
-            costs = number(fill.get("fee_usd", "0"), order_id) + number(
-                fill.get("slippage_cost_usd", "0"), order_id
-            )
+            fee = number(fill.get("fee_usd", "0"), order_id)
+            slip = number(fill.get("slippage_cost_usd", "0"), order_id)
             held, basis = spot_inventory.get(base, (Decimal(0), Decimal(0)))
             if fill["side"] == "buy":
-                spot_inventory[base] = (held + quantity, basis + notional + costs)
+                spent = notional + fee + slip
+                spot_inventory[base] = (held + quantity, basis + spent)
             elif fill["side"] == "sell":
                 if quantity > held or held <= 0:
                     issue("unfunded_spot_sale", "Продажа превышает купленный актив", order_id)
                     continue
                 sold_basis = basis if quantity == held else basis * quantity / held
-                realized = notional - costs - sold_basis
+                proceeds = notional - fee - slip
+                realized = proceeds - sold_basis
                 spot_pnl += realized
                 try:
-                    fill_day = datetime.fromtimestamp(
-                        int(number(fill["timestamp_ms"], order_id)) / 1000, UTC
-                    ).date().isoformat()
+                    fill_day = (
+                        datetime.fromtimestamp(
+                            int(number(fill["timestamp_ms"], order_id)) / 1000, UTC
+                        )
+                        .date()
+                        .isoformat()
+                    )
                 except (OverflowError, ValueError):
                     issue("invalid_fill_time", "Некорректное время исполнения", order_id)
                     fill_day = None
@@ -121,6 +162,13 @@ def reconcile_records(
                 saved.get("cost_usdt", "0")
             ):
                 issue("spot_inventory_mismatch", "Учётная стоимость актива расходится", asset=asset)
+            unit_basis = account.get("cost_basis", {}).get(asset)
+            if quantity > 0 and (unit_basis is None or number(unit_basis) != basis / quantity):
+                issue(
+                    "spot_cost_basis_mismatch",
+                    "Средняя стоимость актива не совпадает с исполнениями",
+                    asset=asset,
+                )
         if account.get("spot_day_utc") and spot_daily_pnl != number(
             account.get("spot_daily_pnl_usdt", "0")
         ):
@@ -181,17 +229,37 @@ def reconcile_records(
     for asset in expected:
         if asset not in totals and expected[asset] != 0:
             issue("missing_balance", "Для актива отсутствует строка баланса", asset=asset)
+    position_assets = set()
     for position in positions:
         asset = str(position.get("asset", str(position.get("symbol", "")).split("/")[0]))
+        position_assets.add(asset)
         if number(position["quantity"]) != totals.get(asset, Decimal(0)):
             issue("position_fill_mismatch", "Позиция не совпадает с остатком актива", asset=asset)
+        if (
+            account.get("account_kind") == "okx_spot"
+            and totals.get(asset, Decimal(0)) > 0
+            and number(position.get("cost_basis"))
+            != number(account.get("cost_basis", {}).get(asset))
+        ):
+            issue(
+                "spot_position_cost_mismatch",
+                "Стоимость позиции не совпадает с учётом актива",
+                asset=asset,
+            )
+    if account.get("account_kind") == "okx_spot":
+        for asset, total in totals.items():
+            if asset != "USDT" and total > 0 and asset not in position_assets:
+                issue(
+                    "missing_spot_position", "Открытая позиция отсутствует в журнале", asset=asset
+                )
     if "fees_paid_usd" in account and number(account["fees_paid_usd"]) != fees:
         issue("fees_total_mismatch", "Сумма комиссий расходится с исполнениями")
     if "slippage_paid_usd" in account and number(account["slippage_paid_usd"]) != slippage:
         issue("slippage_total_mismatch", "Резерв проскальзывания расходится с исполнениями")
     if initial and "realized_pnl_usd" in account:
         pnl = (
-            spot_pnl if account.get("account_kind") == "okx_spot"
+            spot_pnl
+            if account.get("account_kind") == "okx_spot"
             else expected["USDT"] - number(initial.get("USDT", "0"))
         )
         if number(account["realized_pnl_usd"]) != pnl:

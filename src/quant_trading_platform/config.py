@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     okx_spot_auto_enabled: bool = False
     okx_spot_auto_interval_seconds: float = Field(default=5, ge=1, le=60)
     okx_spot_auto_max_spread_pct: Decimal = Field(default=Decimal("0.20"), gt=0, le=1)
+    okx_spot_auto_max_entry_deviation_pct: Decimal = Field(default=Decimal("2"), gt=0, le=5)
     paper_algorithm_version: str = Field(default="paper-alpha-v1", min_length=1, max_length=64)
 
     binance_api_key: str | None = Field(default=None, repr=False, exclude=True)

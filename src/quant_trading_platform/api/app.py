@@ -49,6 +49,12 @@ from quant_trading_platform.strategies.arbitrage import CrossVenueSpreadMonitor
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     assert_safe_startup(settings)
+    if settings.okx_spot_auto_enabled and (
+        not settings.public_market_data_enabled
+        or settings.market_scope == MarketScope.RUSSIAN_STOCKS
+        or not {"BTC/USDT", "ETH/USDT", "LTC/USDT"}.issubset(configured_market_symbols())
+    ):
+        raise ValueError("Automatic OKX paper requires public crypto feeds for BTC, ETH and LTC")
     if settings.okx_spot_paper_account_id == settings.paper_account_id:
         raise ValueError("OKX spot paper account must be separate from spread account")
     paper_store = SQLitePaperStore(settings.paper_database_path)
@@ -634,6 +640,27 @@ def automatic_okx_paper_status() -> dict[str, object]:
     if worker is None:
         raise HTTPException(503, "Automatic paper worker unavailable")
     return serialize_record(worker.snapshot())
+
+
+class AutomaticPaperControl(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["pause", "resume"]
+
+
+@app.post("/paper/okx/robot/control")
+def control_automatic_paper(
+    body: AutomaticPaperControl,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+) -> dict[str, object]:
+    _trusted_paper_origin(request)
+    worker: AutomaticSpotPaper | None = getattr(app.state, "auto_spot", None)
+    if worker is None:
+        raise HTTPException(503, "Automatic paper worker unavailable")
+    try:
+        return serialize_record(worker.control(body.action, idempotency_key=idempotency_key))
+    except PaperCommandError as error:
+        raise _paper_command_http_error(error) from error
 
 
 @app.get("/paper/okx/history")

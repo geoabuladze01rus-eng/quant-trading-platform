@@ -64,8 +64,25 @@ class AutomaticSpotPaper:
     def _save(self, account: dict[str, Any], state: dict[str, Any], conn: Any) -> None:
         previous = account.get("auto_paper", {})
         # Heartbeats update the account, while audit only records changed decisions.
+        decisions = [
+            tuple(
+                decision.get(key)
+                for key in (
+                    "symbol",
+                    "action",
+                    "signal_timestamp_ms",
+                    "signal_reason_code",
+                    "signal_close_usdt",
+                    "signal_reference_usdt",
+                    "side",
+                    "reason_code",
+                    "order_id",
+                )
+            )
+            for decision in state.get("decisions", [])
+        ]
         signature = sha256(
-            repr((state["status"], state["reason_code"], state.get("decisions", []))).encode()
+            repr((state["status"], state["reason_code"], decisions)).encode()
         ).hexdigest()
         state["decision_signature"] = signature
         state["human_reason"] = human_reason(state["reason_code"])
@@ -110,6 +127,9 @@ class AutomaticSpotPaper:
         cfg = self.settings
         if not cfg.okx_spot_auto_enabled:
             return self._blocked("auto_paper_disabled")
+        with self.service.store.transaction() as conn:
+            if self.service._account(self.account_id, conn).get("auto_operator_paused"):
+                return self._paused_state(conn)
         if (
             cfg.trading_mode != TradingMode.PAPER
             or cfg.live_trading_enabled
@@ -160,6 +180,10 @@ class AutomaticSpotPaper:
         store, cfg = self.service.store, self.settings
         with store.transaction() as conn:
             account = self.service._account(self.account_id, conn)
+            # Check again under the same write lock as execution: a pause that
+            # commits while data is being collected must prevent all later fills.
+            if account.get("auto_operator_paused"):
+                return self._paused_state(conn)
             reconciliation = reconcile_records(
                 account,
                 store.list_balances(self.account_id, conn=conn),
@@ -263,6 +287,12 @@ class AutomaticSpotPaper:
                         costs = amount * (FEE_RATE_PCT + SLIPPAGE_RATE_PCT) / 100
                         if spread > cfg.okx_spot_auto_max_spread_pct:
                             side, reason = None, "spread_limit_exceeded"
+                        elif books[symbol].bids[0].price <= signal.reference:
+                            side, reason = None, "trend_invalidated"
+                        elif abs(books[symbol].asks[0].price / signal.close - 1) * 100 > (
+                            cfg.okx_spot_auto_max_entry_deviation_pct
+                        ):
+                            side, reason = None, "entry_price_deviation"
                         elif (
                             marked_assets + amount + costs
                             > initial * cfg.okx_spot_max_total_pct / 100
@@ -360,6 +390,77 @@ class AutomaticSpotPaper:
             self._save(account, state, conn)
             return dict(_plain(state))
 
+    def _paused_state(self, conn: Any) -> dict[str, Any]:
+        account = self.service._account(self.account_id, conn)
+        state = {
+            **account.get("auto_paper", {}),
+            "status": "paused",
+            "reason_code": "auto_paper_paused",
+            "checked_at_ms": self.clock(),
+            "decisions": [],
+        }
+        self._save(account, state, conn)
+        return state
+
+    def control(self, action: str, *, idempotency_key: str) -> dict[str, Any]:
+        """Persist pause/resume; the command and audit have durable idempotency."""
+        if action not in ("pause", "resume"):
+            raise PaperCommandError("invalid_order", "Допустимы pause и resume")
+        store = self.service.store
+        with store.transaction() as conn:
+            account = self.service._account(self.account_id, conn)
+            payload = {
+                "operation": "auto_paper_control",
+                "account_id": self.account_id,
+                "action": action,
+            }
+            replay = self.service._replay(self.account_id, idempotency_key, payload, conn)
+            if replay is not None:
+                return replay
+            if action == "resume":
+                result = reconcile_records(
+                    account,
+                    store.list_balances(self.account_id, conn=conn),
+                    store.list_orders(self.account_id, conn=conn),
+                    store.list_fills(self.account_id, conn=conn),
+                    store.list_positions(self.account_id, conn=conn),
+                )
+                if account.get("status") != "active" or self._failure or result["status"] != "ok":
+                    raise PaperCommandError("reconciliation_mismatch", "Снятие паузы заблокировано")
+            account["auto_operator_paused"] = action == "pause"
+            store.upsert_account(self.account_id, account, conn=conn)
+            reason = "auto_paper_paused" if action == "pause" else "auto_paper_resumed"
+            state = {
+                **account.get("auto_paper", {}),
+                "status": "paused" if action == "pause" else "waiting",
+                "reason_code": reason,
+                "checked_at_ms": self.clock(),
+                "decisions": [],
+            }
+            self._save(account, state, conn)
+            response = {
+                "action": action,
+                "paused": action == "pause",
+                "reason_code": reason,
+                "human_reason": human_reason(reason),
+                "paper_only": True,
+                "live_execution": False,
+                "account_id": self.account_id,
+            }
+            store.insert_audit(
+                {
+                    "account_id": self.account_id,
+                    "actor": "local_paper_user",
+                    "event_type": "auto_paper_control",
+                    "reason_code": reason,
+                    "human_reason": human_reason(reason),
+                    "details": response,
+                },
+                conn=conn,
+            )
+            store.complete_idempotency(self.account_id, idempotency_key, response, conn=conn)
+            return response
+
     def snapshot(self) -> dict[str, Any]:
         with self.service.store.transaction() as conn:
             account = self.service._account(self.account_id, conn)
@@ -368,6 +469,8 @@ class AutomaticSpotPaper:
             state.setdefault("reason_code", "completed_candles_unavailable")
             if not self.settings.okx_spot_auto_enabled:
                 state.update(status="disabled", reason_code="auto_paper_disabled")
+            elif account.get("auto_operator_paused"):
+                state.update(status="paused", reason_code="auto_paper_paused")
             if self._failure:
                 state.update(status="blocked", reason_code=self._failure)
             state["human_reason"] = human_reason(state["reason_code"])
@@ -386,6 +489,22 @@ class AutomaticSpotPaper:
                 "valuation_age_ms": None if valuation is None else self.clock() - int(valuation),
                 "orders_count": len(self.service.store.list_orders(self.account_id, conn=conn)),
                 "fills_count": len(self.service.store.list_fills(self.account_id, conn=conn)),
+                "configuration": _plain(
+                    {
+                        "strategy": VERSION,
+                        "initial_usdt": Decimal(account["initial_balances"]["USDT"]),
+                        "max_order_usdt": self.settings.max_trade_notional_usd,
+                        "max_asset_pct": self.settings.okx_spot_max_asset_pct,
+                        "max_total_pct": self.settings.okx_spot_max_total_pct,
+                        "max_daily_loss_pct": self.settings.max_daily_loss_pct,
+                        "max_entry_deviation_pct": (
+                            self.settings.okx_spot_auto_max_entry_deviation_pct
+                        ),
+                        "max_spread_pct": self.settings.okx_spot_auto_max_spread_pct,
+                        "fee_pct": FEE_RATE_PCT,
+                        "slippage_pct": SLIPPAGE_RATE_PCT,
+                    }
+                ),
             }
 
     async def _run(self) -> None:

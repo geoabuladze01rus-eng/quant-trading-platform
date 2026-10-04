@@ -31,6 +31,9 @@ and owner balance therefore remain unobserved.
 - Execute against the next available current book after the completed signal,
   not at the historical candle price. This forward model differs from the
   next-day-open assumption of the historical replay.
+- Revalidate entry against the current book: bid must remain above the signal's
+  SMA100, and ask must be within 2% of the completed signal close by default
+  (`OKX_SPOT_AUTO_MAX_ENTRY_DEVIATION_PCT`). Otherwise defer without a fill.
 - One entry per symbol/completed candle. The strategy cursor commits with the
   order, fill, balances, average cost, positions, reconciliation and audit.
 - Startup reconciliation and each command reconstruct cash in chronological
@@ -42,6 +45,9 @@ and owner balance therefore remain unobserved.
 - Rejected commands roll back their pending idempotency reservation. Unexpected
   storage errors roll back the entire cycle and halt the automatic account.
 - Manual spot commands return 409 while this account is strategy-managed.
+- Reconciliation also verifies fill identity/price, reconstructed average cost,
+  and the presence and cost of each funded position. Fractional-quantity replay
+  uses the same Decimal operation order as execution.
 - Relative strength is displayed for research; it is not an execution strategy.
 - No news filter or profitability acceptance is claimed. This is an experimental
   paper forward test. Trend signals do not provide a known expected return.
@@ -89,16 +95,37 @@ OKX_SPOT_AUTO_ENABLED=true python -m uvicorn quant_trading_platform.api.app:app 
   --host 127.0.0.1 --port 8000
 ```
 
+Startup fails before opening the database if automatic execution is enabled
+without public crypto feeds for all three BTC/ETH/LTC pairs, or with the Russian
+stocks scope. An enabled but incapable configuration must not appear healthy.
+
 The status response reports enabled, worker_running, heartbeat_age_ms,
-valuation_age_ms, each pair's action/reason, and order/fill counts. A running
+valuation_age_ms, effective risk/cost configuration, each pair's action/reason,
+and order/fill counts. A running
 worker with zero fills can correctly mean no breakout, an existing position,
 an already processed daily signal, a spread/depth/risk rejection, or missing data.
 Read the reason, not just the heartbeat. Monitor routes are read-only.
 
 The dashboard has a separate automatic OKX paper panel and refreshes every five
 seconds. It does not confuse the spread account's balance with the spot account.
-Journal only records changed decisions; heartbeat updates do not generate a new
-audit event every poll. Stop the local process to stop execution; set
+The panel provides paper-only pause/resume. Control commands require a trusted
+origin and a durable Idempotency-Key. For a localhost deployment:
+
+```sh
+curl -X POST http://127.0.0.1:8000/paper/okx/robot/control \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: operator-pause-001' \
+  -d '{"action":"pause"}'
+```
+
+Use a new key and `{"action":"resume"}` to resume. Pause survives restart and is
+checked again inside the execution transaction after market-data collection.
+It stops subsequent cycles, not a transaction already in progress, and does not
+liquidate positions. Resume requires healthy reconciliation and does not reset
+the signal cursor, daily-loss halt or a worker failure.
+
+Journal only records changed decisions; heartbeat and changing cost estimates
+alone do not generate a new audit event every poll. Stop the local process to
+stop execution; set
 `OKX_SPOT_AUTO_ENABLED=false` in your launch configuration to disable subsequent
 starts. Docker Compose has an explicit true setting that must be changed there.
 
@@ -110,6 +137,13 @@ restart, two concurrent workers, stale/unavailable data, wide spread, depth
 failure, daily unrealized loss, overnight gap, storage fault rollback, exact
 partial-exit recovery and legacy-account migration. Fixture fills and losses
 prove execution/accounting behavior, not a trading advantage.
+
+Hardening regressions additionally cover current-price gaps, durable pause and
+resume, pause while collecting inputs, corrupt ledger/position detection,
+fractional inventory liquidation, audit de-duplication, control-route origin and
+idempotency enforcement, and incompatible startup configurations. On October 4
+the local suite passed all 342 tests, Ruff and mypy; the frontend production build
+also passed. See PR #23 for the exact published revision and hosted CI results.
 
 Direct public OKX access timed out in this execution environment. No real-market
 forward return, owner balance change, multi-year profitability or unattended

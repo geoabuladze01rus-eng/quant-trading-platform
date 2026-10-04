@@ -23,7 +23,7 @@ export async function getAutomaticPaper(): Promise<AutoPaperSnapshot> {
       const v = object(value);
       required(v, ['status', 'reason_code', 'human_reason', 'account_id']);
       if (v.paper_only !== true || v.live_execution !== false || typeof v.worker_running !== 'boolean' || typeof v.enabled !== 'boolean') throw new Error('Unsafe robot state');
-      if (!['running', 'blocked', 'disabled', 'waiting'].includes(text(v.status))) throw new Error('Unknown robot state');
+      if (!['running', 'blocked', 'disabled', 'waiting', 'paused'].includes(text(v.status))) throw new Error('Unknown robot state');
       for (const key of ['orders_count', 'fills_count']) if (typeof v[key] !== 'number' || !Number.isInteger(v[key]) || Number(v[key]) < 0) throw new Error('Invalid robot count');
       return v;
     }),
@@ -37,6 +37,13 @@ export async function getAutomaticPaper(): Promise<AutoPaperSnapshot> {
   if (robot.account_id !== portfolio.account_id || robot.account_id !== history.accountId) throw new Error('Paper account mismatch');
   return { robot, account: portfolio, ...history };
 }
+
+export const controlAutomaticPaper = (action: 'pause' | 'resume', key: string) => request('/paper/okx/robot/control', (value) => {
+  const v = object(value);
+  if (v.paper_only !== true || v.live_execution !== false || v.action !== action || typeof v.paused !== 'boolean') throw new Error('Invalid paper control response');
+  required(v, ['account_id', 'reason_code', 'human_reason']);
+  return v;
+}, { action }, key);
 
 function object(value: unknown): Row {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected object');

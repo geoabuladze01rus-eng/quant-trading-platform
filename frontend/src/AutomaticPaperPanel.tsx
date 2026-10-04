@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getAutomaticPaper, paperConfigured } from './paperApi';
+import { controlAutomaticPaper, getAutomaticPaper, paperConfigured } from './paperApi';
 import type { AutoPaperSnapshot, Json } from './paperApi';
 
 const show = (value: Json | undefined) => value === undefined || value === null ? 'Нет данных' : String(value);
@@ -7,6 +7,21 @@ const show = (value: Json | undefined) => value === undefined || value === null 
 export function AutomaticPaperPanel() {
   const [snapshot, setSnapshot] = useState<AutoPaperSnapshot | null>(null);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [controlMessage, setControlMessage] = useState('');
+  const control = async (action: 'pause' | 'resume') => {
+    if (busy) return;
+    if (action === 'resume' && !window.confirm('Возобновить автоматические виртуальные сделки?')) return;
+    setBusy(true);
+    try {
+      const result = await controlAutomaticPaper(action, crypto.randomUUID());
+      setControlMessage(show(result.human_reason));
+      setSnapshot(await getAutomaticPaper());
+    } catch {
+      setControlMessage('Результат команды не подтверждён. Проверьте состояние робота перед повтором.');
+      setSnapshot(null);
+    } finally { setBusy(false); }
+  };
   useEffect(() => {
     if (!paperConfigured) return;
     let active = true;
@@ -31,9 +46,12 @@ export function AutomaticPaperPanel() {
     <p>Отдельный виртуальный счёт в USDT. BTC/USDT, ETH/USDT и LTC/USDT · дневной тренд.</p>
     {!paperConfigured && <p>Подключите сервер терминала для проверки исполнения.</p>}
     {error && <p role="alert">{error}</p>}
+    {controlMessage && <p role="status">{controlMessage}</p>}
     {paperConfigured && !snapshot && !error && <p>Состояние загружается…</p>}
     {snapshot && robot && <>
       <p role="status">{show(robot.status)} · {show(robot.human_reason)}</p>
+      <button disabled={busy || robot.status === 'paused'} onClick={() => void control('pause')}>Приостановить paper-робота</button>
+      <button disabled={busy || robot.status !== 'paused' || !robot.enabled || snapshot.account.status !== 'active'} onClick={() => void control('resume')}>Возобновить виртуальные сделки</button>
       {(!robot.worker_running || heartbeatOld) && <p role="alert">Работающий цикл не подтверждён: проверьте запуск и время последней проверки.</p>}
       <p>Заявок: {show(robot.orders_count)} · Исполнений: {show(robot.fills_count)} · Сверка: {snapshot.reconciliation.status}</p>
       <p>Последняя проверка: {typeof robot.checked_at_ms === 'number' ? new Date(robot.checked_at_ms).toLocaleString('ru-RU') : 'Нет данных'} · Возраст оценки: {show(robot.valuation_age_ms)} мс</p>
