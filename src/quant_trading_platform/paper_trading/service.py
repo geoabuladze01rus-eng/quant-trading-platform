@@ -139,7 +139,7 @@ class PersistentPaperService:
                 else (Decimal(0), Decimal(0), None)
             )
             reason = funds[2]
-            if command.symbol not in ("BTC/USDT", "ETH/USDT"):
+            if command.symbol not in ("BTC/USDT", "ETH/USDT", "LTC/USDT"):
                 reason = "unsupported_market"
             rejected = reason is not None or not report.fills
             partial = bool(report.fills and report.fills[0].notional_usd < notional_usd)
@@ -265,7 +265,7 @@ class PersistentPaperService:
                 else (Decimal(0), Decimal(0), None)
             )
             rejection = funding_error if report.fills else canonical_reason_code(report.reason_code)
-            if command.symbol not in ("BTC/USDT", "ETH/USDT"):
+            if command.symbol not in ("BTC/USDT", "ETH/USDT", "LTC/USDT"):
                 rejection = "unsupported_market"
             if rejection:
                 order.update(

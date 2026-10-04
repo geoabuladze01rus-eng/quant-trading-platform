@@ -6,6 +6,7 @@ from dataclasses import asdict, replace
 from decimal import Decimal
 from hashlib import sha256
 from time import time
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -19,7 +20,9 @@ from quant_trading_platform.connectors.crypto import BinanceConnector, BybitConn
 from quant_trading_platform.explainability import explain_opportunity, explain_paper_execution
 from quant_trading_platform.explainability.reasons import human_reason
 from quant_trading_platform.market_data.models import NormalizedOrderBook
-from quant_trading_platform.market_data.service import MarketDataService
+from quant_trading_platform.market_data.okx_candles import OKXCandleSource
+from quant_trading_platform.market_data.service import MarketDataService, MultiMarketDataService
+from quant_trading_platform.market_data.spot_signal_service import SpotSignalService
 from quant_trading_platform.models import (
     ArbitrageOpportunity,
     MarketQuote,
@@ -28,7 +31,10 @@ from quant_trading_platform.models import (
     normalize_symbol,
 )
 from quant_trading_platform.paper_trading import PaperExecutionEngine
+from quant_trading_platform.paper_trading.auto_spot import AutomaticSpotPaper
 from quant_trading_platform.paper_trading.models import PaperCommandError
+from quant_trading_platform.paper_trading.okx_spot import OKXSpotPaperService
+from quant_trading_platform.paper_trading.reconciliation import reconcile_records
 from quant_trading_platform.paper_trading.residual_exposure import (
     PaperLegEvent,
     assess_leg_events,
@@ -43,42 +49,88 @@ from quant_trading_platform.strategies.arbitrage import CrossVenueSpreadMonitor
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     assert_safe_startup(settings)
+    if settings.okx_spot_paper_account_id == settings.paper_account_id:
+        raise ValueError("OKX spot paper account must be separate from spread account")
     paper_store = SQLitePaperStore(settings.paper_database_path)
+    spread_seed = {
+        "USDT": settings.paper_initial_usdt, "BTC": settings.paper_initial_btc,
+        "ETH": settings.paper_initial_eth, "LTC": settings.paper_initial_ltc,
+    }
+    existing = paper_store.get_account(settings.paper_account_id)
+    if existing is not None:
+        # Extending the universe must not silently credit a funded legacy account.
+        spread_seed = {
+            asset: Decimal(value) for asset, value in existing["initial_balances"].items()
+        }
+        spread_seed.setdefault("LTC", Decimal(0))
+        paper_store.upsert_account(settings.paper_account_id, {"initial_balances": spread_seed})
     paper_store.seed_account(
         settings.paper_account_id,
-        {
-            "USDT": settings.paper_initial_usdt,
-            "BTC": settings.paper_initial_btc,
-            "ETH": settings.paper_initial_eth,
-        },
+        spread_seed,
     )
     app.state.paper_store = paper_store
     app.state.paper_service = PersistentPaperService(paper_store)
+    spot_account = paper_store.seed_account(
+        settings.okx_spot_paper_account_id,
+        {"USDT": settings.okx_spot_paper_initial_usdt,
+         "BTC": Decimal(0), "ETH": Decimal(0), "LTC": Decimal(0)},
+    )
+    if spot_account.get("account_kind") not in (None, "okx_spot"):
+        raise ValueError("OKX spot account has an incompatible kind")
+    if spot_account.get("account_kind") is None and paper_store.list_orders(
+        settings.okx_spot_paper_account_id
+    ):
+        raise ValueError("Existing paper orders cannot be relabelled as OKX spot")
+    paper_store.upsert_account(
+        settings.okx_spot_paper_account_id, {"account_kind": "okx_spot"}
+    )
+    app.state.okx_spot_service = OKXSpotPaperService(paper_store)
     app.state.persistent_audit = PersistentAuditLog(paper_store)
     # A durable paper account must pass accounting reconciliation before new commands.
     app.state.paper_recovery = app.state.paper_service.recover(settings.paper_account_id)
+    app.state.okx_spot_recovery = app.state.okx_spot_service.recover(
+        settings.okx_spot_paper_account_id
+    )
     service = None
     if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
-        service = MarketDataService(
-            [BinanceConnector(settings), BybitConnector(settings), OKXConnector(settings)],
-            _QUOTE_CACHE,
-            symbol=settings.market_data_symbol,
-            interval_seconds=settings.market_data_poll_interval_seconds,
-            max_age_ms=settings.max_market_data_age_ms,
-            on_update=record_detected_opportunities,
+        service = MultiMarketDataService(
+            [MarketDataService(
+                [BinanceConnector(settings), BybitConnector(settings), OKXConnector(settings)],
+                _QUOTE_CACHE,
+                symbol=symbol,
+                interval_seconds=settings.market_data_poll_interval_seconds,
+                max_age_ms=settings.max_market_data_age_ms,
+                on_update=record_detected_opportunities,
+            ) for symbol in configured_market_symbols()]
         )
     app.state.market_data = service
+    spot_service = None
+    if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
+        spot_service = SpotSignalService(OKXCandleSource())
+    app.state.spot_signals = spot_service
+    auto_spot = AutomaticSpotPaper(app.state.okx_spot_service, settings, spot_service, service)
+    app.state.auto_spot = auto_spot
     try:
         if service is not None:
             await service.start()
+        if spot_service is not None:
+            await spot_service.start()
+        await auto_spot.start()
         yield
     finally:
+        await auto_spot.stop()
+        if spot_service is not None:
+            await spot_service.stop()
         if service is not None:
             await service.stop()
         _QUOTE_CACHE.clear()
         _LAST_SIGNALS.clear()
         app.state.market_data = None
+        app.state.spot_signals = None
+        app.state.auto_spot = None
         app.state.paper_service = None
+        app.state.okx_spot_service = None
+        app.state.okx_spot_recovery = None
         app.state.persistent_audit = None
         app.state.paper_recovery = None
         app.state.paper_store = None
@@ -101,6 +153,15 @@ paper_engine = PaperExecutionEngine()
 # Producers populate this cache; GET requests only inspect a snapshot.
 _QUOTE_CACHE: dict[tuple[str, str], MarketQuote] = {}
 _LAST_SIGNALS: dict[tuple[str, str, str], str] = {}
+
+
+def configured_market_symbols() -> tuple[str, ...]:
+    symbols = tuple(normalize_symbol(item) for item in settings.market_data_symbols.split(","))
+    if not 1 <= len(symbols) <= 10 or len(set(symbols)) != len(symbols):
+        raise ValueError("Configure one to ten unique market data symbols")
+    if any(not symbol.endswith("/USDT") for symbol in symbols):
+        raise ValueError("Only USDT spot pairs are supported")
+    return symbols
 
 
 def now_ms() -> int:
@@ -128,7 +189,9 @@ def get_settings() -> dict[str, object]:
 
 @app.get("/venues")
 def venues() -> list[dict[str, object]]:
-    service: MarketDataService | None = getattr(app.state, "market_data", None)
+    service: MarketDataService | MultiMarketDataService | None = getattr(
+        app.state, "market_data", None
+    )
     disabled = (
         not settings.public_market_data_enabled
         or settings.market_scope == MarketScope.RUSSIAN_STOCKS
@@ -152,6 +215,16 @@ def venues() -> list[dict[str, object]]:
             "bid": None, "ask": None, "timestamp_source": None,
             "depth_status": "unavailable", "bid_levels": 0, "ask_levels": 0,
         }]
+
+
+@app.get("/strategies/spot-signals")
+def spot_signals() -> dict[str, object]:
+    """Read-only cached candidates; never fetch or send orders in a GET request."""
+    service: SpotSignalService | None = getattr(app.state, "spot_signals", None)
+    if service is None:
+        return {"status": "disabled", "paper_only": True, "live_execution": False,
+                "signals": [], "reason": "Публичные данные OKX отключены."}
+    return service.snapshot()
 
 
 @app.get("/opportunities")
@@ -296,6 +369,18 @@ class PersistentPaperOrderRequest(BaseModel):
     symbol: str = Field(min_length=3, max_length=32)
     buy_venue: Venue
     sell_venue: Venue
+    notional_usdt: Decimal = Field(gt=0, max_digits=24, decimal_places=12)
+
+    @field_validator("symbol")
+    @classmethod
+    def canonical_symbol(cls, value: str) -> str:
+        return normalize_symbol(value)
+
+
+class OKXSpotPaperRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    symbol: str = Field(min_length=3, max_length=32)
+    side: Literal["buy", "sell"]
     notional_usdt: Decimal = Field(gt=0, max_digits=24, decimal_places=12)
 
     @field_validator("symbol")
@@ -533,6 +618,72 @@ def serialize_record(record: dict[str, object]) -> dict[str, object]:
 @app.get("/paper/account")
 def paper_account() -> dict[str, object]:
     return serialize_record(_persistent_paper_service().account(settings.paper_account_id))
+
+
+@app.get("/paper/okx/account")
+def okx_spot_paper_account() -> dict[str, object]:
+    service: OKXSpotPaperService | None = getattr(app.state, "okx_spot_service", None)
+    if service is None:
+        raise HTTPException(503, "OKX spot paper service is unavailable")
+    return serialize_record(service.account(settings.okx_spot_paper_account_id))
+
+
+@app.get("/paper/okx/robot")
+def automatic_okx_paper_status() -> dict[str, object]:
+    worker: AutomaticSpotPaper | None = getattr(app.state, "auto_spot", None)
+    if worker is None:
+        raise HTTPException(503, "Automatic paper worker unavailable")
+    return serialize_record(worker.snapshot())
+
+
+@app.get("/paper/okx/history")
+def okx_spot_paper_history(limit: int = 50) -> dict[str, object]:
+    if not 1 <= limit <= 100:
+        raise HTTPException(422, "Limit must be 1 to 100")
+    service: OKXSpotPaperService | None = getattr(app.state, "okx_spot_service", None)
+    if service is None:
+        raise HTTPException(503, "OKX spot paper service unavailable")
+    with service.store.transaction() as conn:
+        account_id = settings.okx_spot_paper_account_id
+        return serialize_record({
+            "account_id": account_id, "paper_only": True, "live_execution": False,
+            "orders": service.store.list_orders(account_id, conn=conn)[:limit],
+            "fills": service.store.list_fills(account_id, conn=conn)[:limit],
+            "accounting_reconciliation": reconcile_records(
+                service._account(account_id, conn),
+                service.store.list_balances(account_id, conn=conn),
+                service.store.list_orders(account_id, conn=conn),
+                service.store.list_fills(account_id, conn=conn),
+                service.store.list_positions(account_id, conn=conn),
+            ),
+        })
+
+
+@app.post("/paper/okx/orders")
+async def create_okx_spot_paper_order(
+    body: OKXSpotPaperRequest,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=128),
+) -> dict[str, object]:
+    _trusted_paper_origin(request)
+    if settings.okx_spot_auto_enabled:
+        raise HTTPException(409, "Automatic paper account is managed by its strategy")
+    service: OKXSpotPaperService | None = getattr(app.state, "okx_spot_service", None)
+    if service is None:
+        raise HTTPException(503, "OKX spot paper service is unavailable")
+    market_data: MarketDataService | MultiMarketDataService | None = getattr(
+        app.state, "market_data", None
+    )
+    book = None if market_data is None else market_data.book_for_simulation(Venue.OKX, body.symbol)
+    try:
+        result = service.execute_spot(
+            symbol=body.symbol, side=body.side, notional_usdt=body.notional_usdt,
+            book=book, settings=settings, idempotency_key=idempotency_key,
+            account_id=settings.okx_spot_paper_account_id,
+        )
+    except PaperCommandError as error:
+        raise _paper_command_http_error(error) from error
+    return serialize_record(result)
 
 
 @app.get("/paper/balances")
