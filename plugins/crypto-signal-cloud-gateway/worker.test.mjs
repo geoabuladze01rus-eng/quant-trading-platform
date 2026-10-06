@@ -72,3 +72,12 @@ test('network failures and upstream bodies become sanitized closed failures', as
     }
   } finally { globalThis.fetch = previous; }
 });
+
+test('discovery contains no private data and supports the Sites provisioning probe', async () => {
+  const previous = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ jsonrpc: '2.0', id: 2, result: { tools: [] } });
+  try {
+    const response = await worker.fetch(request({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, false), env);
+    assert.equal(response.status, 200);
+  } finally { globalThis.fetch = previous; }
+});

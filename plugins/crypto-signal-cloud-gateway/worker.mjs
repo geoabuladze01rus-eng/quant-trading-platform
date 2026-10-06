@@ -26,7 +26,6 @@ async function boundedBody(body, limit) {
 
 export default {
   async fetch(request, env) {
-    if (!request.headers.get('oai-authenticated-user-id')) return failure(401, 'Authentication required');
     if (typeof env.MCP_ACCESS_TOKEN !== 'string' || env.MCP_ACCESS_TOKEN.length < 32)
       return failure(503, 'Gateway unavailable');
     const path = new URL(request.url).pathname;
@@ -43,6 +42,8 @@ export default {
           Object.keys(rpc.params.arguments).some(key => key !== 'symbol')))
         throw new Error('Invalid tool');
     } catch { return failure(400, 'Invalid MCP request'); }
+    if (rpc.method === 'tools/call' && !request.headers.get('oai-authenticated-user-id'))
+      return failure(401, 'Authentication required');
     try {
       const response = await fetch(upstream, {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(6000),
