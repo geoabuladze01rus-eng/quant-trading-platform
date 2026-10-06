@@ -3,13 +3,14 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from quant_trading_platform.config import Settings
-from quant_trading_platform.connectors.crypto.client import MarketDataError
 from quant_trading_platform.connectors.crypto.derivatives import (
     BinanceDerivativesSource,
     BybitDerivativesSource,
     OKXDerivativesSource,
 )
+
+from quant_trading_platform.config import Settings
+from quant_trading_platform.connectors.crypto.client import MarketDataError
 from quant_trading_platform.models import Venue
 
 
@@ -198,11 +199,13 @@ def test_derivatives_source_sanitizes_http_failures(
     | type[BybitDerivativesSource]
     | type[OKXDerivativesSource],
 ) -> None:
-    with httpx.Client(
-        transport=httpx.MockTransport(lambda _: httpx.Response(500, text="secret")),
-    ) as http:
-        with pytest.raises(MarketDataError) as error:
-            source_cls(Settings(_env_file=None), http).get_snapshot("BTC/USDT")
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(lambda _: httpx.Response(500, text="secret")),
+        ) as http,
+        pytest.raises(MarketDataError) as error,
+    ):
+        source_cls(Settings(_env_file=None), http).get_snapshot("BTC/USDT")
     assert "secret" not in str(error.value)
 
 
@@ -228,9 +231,11 @@ def test_second_request_failure_never_returns_partial_binance_snapshot(
             })
         return httpx.Response(503, text="partial secret")
 
-    with httpx.Client(transport=httpx.MockTransport(handle)) as http:
-        with pytest.raises(MarketDataError, match="request failed") as error:
-            BinanceDerivativesSource(Settings(_env_file=None), http).get_snapshot("BTCUSDT")
+    with (
+        httpx.Client(transport=httpx.MockTransport(handle)) as http,
+        pytest.raises(MarketDataError, match="request failed") as error,
+    ):
+        BinanceDerivativesSource(Settings(_env_file=None), http).get_snapshot("BTCUSDT")
     assert "secret" not in str(error.value)
 
 
@@ -257,6 +262,8 @@ def test_rejects_exchange_response_for_wrong_symbol(
             "time": 9_950,
         })
 
-    with httpx.Client(transport=httpx.MockTransport(handle)) as http:
-        with pytest.raises(MarketDataError, match="symbol mismatch"):
-            BinanceDerivativesSource(Settings(_env_file=None), http).get_snapshot("BTC/USDT")
+    with (
+        httpx.Client(transport=httpx.MockTransport(handle)) as http,
+        pytest.raises(MarketDataError, match="symbol mismatch"),
+    ):
+        BinanceDerivativesSource(Settings(_env_file=None), http).get_snapshot("BTC/USDT")
