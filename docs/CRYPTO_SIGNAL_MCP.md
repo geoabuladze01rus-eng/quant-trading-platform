@@ -1,5 +1,11 @@
 # Crypto Signal Data Hub — private MCP adapter
 
+Hosted follow-up: [Hosted Data Hub](HOSTED_DATA_HUB.md) describes the combined
+dashboard/read-only gateway and authenticated HTTP MCP. Native stdio remains the
+default. The historical deployment-pending section below is superseded by that
+follow-up: Railway now serves the dashboard and `/mcp/`, while ChatGPT account
+installation and unattended Watch integration remain unverified.
+
 This adapter exposes exactly one read-only MCP tool: `get_signal_evidence(symbol)`.
 Symbols are the enum BTC/USDT, ETH/USDT, SOL/USDT. It returns the existing Data Hub
 contract, without opening trades, polling exchanges or importing the trading API.
@@ -31,7 +37,10 @@ unauthenticated paper command API on a public domain to make this bridge work.
 
 The adapter pins the official MCP Python SDK to 1.30.0. It is optional for ordinary
 backend runtime installations and included in development dependencies for tests.
-The adapter starts no listener and supplies no MCP HTTP transport configuration.
+Default stdio startup opens no listener. `MCP_TRANSPORT=streamable-http` enables
+standalone HTTP compatibility; that standalone entrypoint provides no hosted
+authentication. Do not publish it or `Dockerfile.mcp` directly. Use the protected
+gateway in `Dockerfile.hosted` for remote deployment.
 
 ## Contract and safety
 
