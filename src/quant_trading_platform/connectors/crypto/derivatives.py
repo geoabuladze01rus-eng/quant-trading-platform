@@ -128,7 +128,7 @@ class BinanceDerivativesSource(PublicDerivativesSource):
             open_interest=_decimal_value(interest.get("openInterest")),
             open_interest_unit=canonical.split("/", 1)[0],
             source_fields=("mark_price", "index_price", "funding_rate", "open_interest"),
-            max_age_ms=self.settings.max_market_data_age_ms,
+            max_age_ms=self.settings.max_derivatives_data_age_ms,
         )
 
 
@@ -190,7 +190,7 @@ class BybitDerivativesSource(PublicDerivativesSource):
             open_interest=_decimal_value(oi.get("openInterest")),
             open_interest_unit=canonical.split("/", 1)[0],
             source_fields=("mark_price", "index_price", "funding_rate", "open_interest"),
-            max_age_ms=self.settings.max_market_data_age_ms,
+            max_age_ms=self.settings.max_derivatives_data_age_ms,
         )
 
 
@@ -272,5 +272,5 @@ class OKXDerivativesSource(PublicDerivativesSource):
             open_interest=_decimal_value(oi.get("oi")),
             open_interest_unit="contracts",
             source_fields=("mark_price", "index_price", "funding_rate", "open_interest"),
-            max_age_ms=self.settings.max_market_data_age_ms,
+            max_age_ms=self.settings.max_derivatives_data_age_ms,
         )
