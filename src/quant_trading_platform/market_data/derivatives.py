@@ -51,7 +51,8 @@ def _decimal(
     except InvalidOperation as error:
         raise ValueError(f"{name} must be finite") from error
     if not parsed.is_finite():
-        raise ValueError(f"{name} must be finite")
+        qualifier = "finite and positive" if positive else "finite"
+        raise ValueError(f"{name} must be {qualifier}")
     if positive and parsed <= 0:
         raise ValueError(f"{name} must be finite and positive")
     return parsed
