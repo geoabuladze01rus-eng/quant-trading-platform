@@ -1,7 +1,6 @@
 from decimal import Decimal
 
 import pytest
-
 from quant_trading_platform.market_data.derivatives import (
     derivatives_instrument_id,
     normalize_derivatives_snapshot,
