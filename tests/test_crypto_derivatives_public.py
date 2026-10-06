@@ -2,7 +2,6 @@ from decimal import Decimal
 
 import httpx
 import pytest
-
 from quant_trading_platform.connectors.crypto.derivatives import (
     BinanceDerivativesSource,
     BybitDerivativesSource,
