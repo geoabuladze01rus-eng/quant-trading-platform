@@ -6,6 +6,7 @@ from quant_trading_platform.market_data.derivatives import (
     derivatives_instrument_id,
     normalize_derivatives_snapshot,
 )
+
 from quant_trading_platform.models import Venue
 
 
