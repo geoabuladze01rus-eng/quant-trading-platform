@@ -1,4 +1,4 @@
-"""Single read-only MCP tool over stdio; no web listener or trading API imports."""
+"""Single read-only MCP tool over stdio or stateless Streamable HTTP."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -13,7 +13,14 @@ from quant_trading_platform.mcp.evidence_client import EvidenceClient
 SignalSymbol = Literal["BTC/USDT", "ETH/USDT", "SOL/USDT"]
 
 
-def create_server(adapter: EvidenceClient) -> FastMCP[None]:
+def create_server(
+    adapter: EvidenceClient,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    stateless_http: bool = False,
+    json_response: bool = False,
+) -> FastMCP[None]:
     @asynccontextmanager
     async def lifespan(server: FastMCP[None]) -> AsyncIterator[None]:
         try:
@@ -29,6 +36,10 @@ def create_server(adapter: EvidenceClient) -> FastMCP[None]:
         ),
         lifespan=lifespan,
         log_level="ERROR",
+        host=host,
+        port=port,
+        stateless_http=stateless_http,
+        json_response=json_response,
     )
 
     @server.tool(
@@ -49,7 +60,25 @@ def main() -> None:
         adapter = EvidenceClient(origin)
     except ValueError:
         raise SystemExit("Invalid signal evidence origin") from None
-    create_server(adapter).run(transport="stdio")
+
+    transport = environ.get("MCP_TRANSPORT", "stdio")
+    if transport == "stdio":
+        create_server(adapter).run(transport="stdio")
+        return
+    if transport == "streamable-http":
+        try:
+            port = int(environ.get("PORT", "8000"))
+        except ValueError:
+            raise SystemExit("Invalid MCP port") from None
+        create_server(
+            adapter,
+            host="0.0.0.0",
+            port=port,
+            stateless_http=True,
+            json_response=True,
+        ).run(transport="streamable-http")
+        return
+    raise SystemExit("Invalid MCP transport")
 
 
 if __name__ == "__main__":
