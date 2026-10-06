@@ -2,14 +2,14 @@ from decimal import Decimal
 
 import httpx
 import pytest
+
+from quant_trading_platform.config import Settings
+from quant_trading_platform.connectors.crypto.client import MarketDataError
 from quant_trading_platform.connectors.crypto.derivatives import (
     BinanceDerivativesSource,
     BybitDerivativesSource,
     OKXDerivativesSource,
 )
-
-from quant_trading_platform.config import Settings
-from quant_trading_platform.connectors.crypto.client import MarketDataError
 from quant_trading_platform.models import Venue
 
 
