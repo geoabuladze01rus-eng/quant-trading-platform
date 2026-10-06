@@ -46,6 +46,14 @@ def _optional_timestamp(value: object) -> int | None:
     return _timestamp(value)
 
 
+def _decimal_value(value: object) -> str | int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise MarketDataError("Missing or invalid derivatives numeric field")
+    return value
+
+
 class PublicDerivativesSource:
     venue: Venue
 
@@ -113,11 +121,11 @@ class BinanceDerivativesSource(PublicDerivativesSource):
             instrument_id=instrument,
             timestamp_ms=timestamp_ms,
             received_at_ms=received_at_ms,
-            mark_price=premium.get("markPrice"),
-            index_price=premium.get("indexPrice"),
-            funding_rate=premium.get("lastFundingRate"),
+            mark_price=_decimal_value(premium.get("markPrice")),
+            index_price=_decimal_value(premium.get("indexPrice")),
+            funding_rate=_decimal_value(premium.get("lastFundingRate")),
             next_funding_time_ms=_optional_timestamp(premium.get("nextFundingTime")),
-            open_interest=interest.get("openInterest"),
+            open_interest=_decimal_value(oi.get("openInterest")),
             open_interest_unit=canonical.split("/", 1)[0],
             source_fields=("mark_price", "index_price", "funding_rate", "open_interest"),
             max_age_ms=self.settings.max_market_data_age_ms,
@@ -177,7 +185,7 @@ class BybitDerivativesSource(PublicDerivativesSource):
             received_at_ms=received_at_ms,
             mark_price=ticker.get("markPrice"),
             index_price=ticker.get("indexPrice"),
-            funding_rate=ticker.get("fundingRate"),
+            funding_rate=_decimal_value(ticker.get("fundingRate")),
             next_funding_time_ms=_optional_timestamp(ticker.get("nextFundingTime")),
             open_interest=oi.get("openInterest"),
             open_interest_unit=canonical.split("/", 1)[0],
@@ -257,11 +265,11 @@ class OKXDerivativesSource(PublicDerivativesSource):
             instrument_id=instrument,
             timestamp_ms=timestamp_ms,
             received_at_ms=received_at_ms,
-            mark_price=mark.get("markPx"),
-            index_price=index.get("idxPx"),
+            mark_price=_decimal_value(mark.get("markPx")),
+            index_price=_decimal_value(index.get("idxPx")),
             funding_rate=funding.get("fundingRate"),
             next_funding_time_ms=_optional_timestamp(funding.get("nextFundingTime")),
-            open_interest=oi.get("oi"),
+            open_interest=_decimal_value(oi.get("oi")),
             open_interest_unit="contracts",
             source_fields=("mark_price", "index_price", "funding_rate", "open_interest"),
             max_age_ms=self.settings.max_market_data_age_ms,
