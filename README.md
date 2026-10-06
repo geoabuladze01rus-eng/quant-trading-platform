@@ -172,3 +172,8 @@ Read-only spot + derivatives + liquidation evidence is available at
 `GET /signal-evidence/BTC%2FUSDT` for BTC/USDT, ETH/USDT and SOL/USDT.
 It uses public Binance/Bybit/OKX endpoints, requires no API keys and never submits orders.
 See [contract, configuration and limitations](docs/CRYPTO_SIGNAL_DATA_HUB.md).
+
+The [optional Native MCP adapter](docs/CRYPTO_SIGNAL_MCP.md) exposes only
+`get_signal_evidence` over stdio. Install with `pip install -e '.[mcp]'` and use the
+portable private package in `plugins/crypto-signal-data-hub/`. Hosted/mobile connection
+remains dependent on a verified deployed read-only backend.

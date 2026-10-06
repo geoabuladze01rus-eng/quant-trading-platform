@@ -91,3 +91,7 @@ From the root: `ruff check .`, `mypy src`, `pytest -q`,
 From frontend: `npm ci`, `npm run build`.
 External exchange availability must be checked separately; mocked transport tests do
 not establish live public feed availability.
+
+The optional [private MCP adapter](CRYPTO_SIGNAL_MCP.md) implements the single approved
+tool over Native stdio, calling only this evidence endpoint. Remote deployment and
+scheduled watcher connection require a verified persistent read-only host.
