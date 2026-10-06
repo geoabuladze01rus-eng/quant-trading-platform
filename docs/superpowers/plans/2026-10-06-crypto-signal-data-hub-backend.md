@@ -12,7 +12,8 @@
 
 ## Global Constraints
 
-- Primary symbols are exactly `BTC/USDT`, `ETH/USDT`, `SOL/USDT`.
+- Primary signal-evidence symbols are exactly `BTC/USDT`, `ETH/USDT`, `SOL/USDT`.
+- Preserve LTC support required by the existing OKX paper runner; the default spot polling universe becomes `BTC/USDT,ETH/USDT,LTC/USDT,SOL/USDT` rather than replacing LTC.
 - Public/read-only exchange data only; no private API keys or authenticated account endpoints.
 - No real `place_order`, withdrawal, transfer, deposit, margin or leverage action.
 - Existing `TRADING_MODE=paper`, `LIVE_TRADING_ENABLED=false` and live acceptance locks remain intact.
@@ -124,6 +125,7 @@ git commit -m "feat: add public derivatives snapshots"
 **Interfaces:**
 - Consumes: `PublicDerivativesSource.get_snapshot(symbol)`.
 - Produces: `DerivativesEvidenceService`, `MultiDerivativesEvidenceService`, `DerivativesSourceState`.
+- `DerivativesSourceState` retains current and immediately previous comparable snapshot for same-venue OI deltas; it never compares OI across different units/instruments.
 - Produces read-only methods: `snapshot() -> list[dict[str, object]]`, `fresh_snapshot(venue, symbol) -> DerivativesSnapshot | None`.
 
 - [ ] **Step 1: Write failing service-state tests**
@@ -147,6 +149,8 @@ Match the existing `MarketDataService` lifecycle and backoff style. Add conserva
 - `derivatives_data_enabled: bool = True`
 - `derivatives_poll_interval_seconds` bounded to a safe public-REST cadence;
 - `max_derivatives_data_age_ms` as an explicit freshness limit.
+
+Set the existing default `market_data_symbols` to `BTC/USDT,ETH/USDT,LTC/USDT,SOL/USDT` so SOL spot depth is available without removing LTC required by the current paper runner. Derivatives polling itself is restricted to BTC/ETH/SOL.
 
 Do not modify paper accounting or execution code.
 
