@@ -36,8 +36,11 @@ class Settings(BaseSettings):
     max_market_data_age_ms: int = Field(default=1_000, gt=0)
     public_market_data_enabled: bool = True
     market_data_symbol: str = "BTC/USDT"
-    market_data_symbols: str = "BTC/USDT,ETH/USDT,LTC/USDT"
+    market_data_symbols: str = "BTC/USDT,ETH/USDT,LTC/USDT,SOL/USDT"
     market_data_poll_interval_seconds: float = Field(default=1.0, ge=0.25, le=60)
+    derivatives_data_enabled: bool = True
+    derivatives_poll_interval_seconds: float = Field(default=5.0, ge=0.25, le=60)
+    max_derivatives_data_age_ms: int = Field(default=10_000, gt=0)
     live_order_acceptance_gate: bool = False
 
     paper_database_path: Path = Path("data/paper_alpha.sqlite3")
