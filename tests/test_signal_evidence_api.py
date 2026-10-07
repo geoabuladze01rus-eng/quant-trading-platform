@@ -1,0 +1,135 @@
+from importlib import import_module
+
+import httpx
+import pytest
+
+from quant_trading_platform.market_data.derivatives import (
+    DerivativesEvidenceService,
+    MultiDerivativesEvidenceService,
+    normalize_derivatives_snapshot,
+)
+from quant_trading_platform.market_data.liquidations import LiquidationWindow
+from quant_trading_platform.market_data.models import normalize_order_book
+from quant_trading_platform.market_data.service import MarketDataService, MultiMarketDataService
+from quant_trading_platform.market_data.signal_evidence import get_signal_evidence
+from quant_trading_platform.models import Venue
+
+VENUES = (Venue.BINANCE, Venue.BYBIT, Venue.OKX)
+
+
+class SpotSource:
+    def __init__(self, venue):
+        self.venue = venue
+
+    def get_order_book(self, symbol):
+        return normalize_order_book(self.venue, symbol, [["99", "2"]], [["101", "1"]], 1000, 1000)
+
+    def close(self):
+        pass
+
+
+class DerivativeSource:
+    def __init__(self, venue):
+        self.venue = venue
+
+    def get_snapshot(self, symbol):
+        return normalize_derivatives_snapshot(
+            venue=self.venue,
+            symbol=symbol,
+            instrument_id="BTC-USDT-SWAP" if self.venue == Venue.OKX else "BTCUSDT",
+            timestamp_ms=1000,
+            received_at_ms=1000,
+            mark_price="102",
+            index_price="101",
+            funding_rate=".001",
+            open_interest="3",
+            open_interest_unit="contracts" if self.venue == Venue.OKX else "base_asset",
+        )
+
+    def close(self):
+        pass
+
+
+async def services(spot_count, derivative_count):
+    spot = MarketDataService([SpotSource(v) for v in VENUES[:spot_count]], {}, clock=lambda: 1000)
+    derivative = DerivativesEvidenceService(
+        [DerivativeSource(v) for v in VENUES[:derivative_count]], clock=lambda: 1000
+    )
+    await spot.poll_once()
+    await derivative.poll_once()
+    return MultiMarketDataService([spot]), MultiDerivativesEvidenceService([derivative])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "spot_n,deriv_n,status",
+    [(3, 3, "healthy"), (2, 2, "degraded"), (3, 1, "insufficient"), (1, 3, "insufficient")],
+)
+async def test_quality_units_and_metrics(spot_n, deriv_n, status):
+    spot, derivatives = await services(spot_n, deriv_n)
+    result = get_signal_evidence(
+        "BTC/USDT",
+        spot=spot,
+        derivatives=derivatives,
+        liquidations=LiquidationWindow(),
+        generated_at_ms=1000,
+    )
+    assert result["quality"]["status"] == status
+    assert result["quality"]["expected_sources"] == 6
+    assert result["quality"]["fresh_sources"] == spot_n + deriv_n
+    assert result["execution"] == {"paper_only": True, "live_execution": False}
+    assert result["derivatives"]["open_interest_change"] is None
+    assert "open_interest_total" not in result["derivatives"]
+    assert result["derivatives"]["venues"][0]["mark_spot_basis_pct"] == ("2.00" if spot_n else None)
+    assert result["derivatives"]["funding_consensus"]["median"] == "0.001"
+    if deriv_n == 3:
+        assert result["derivatives"]["venues"][2]["open_interest_unit"] == "contracts"
+    import json
+
+    serialized = json.dumps(result)
+    for directive in ('"BUY"', '"SELL"', '"LONG"', '"SHORT"', '"price_target"'):
+        assert directive not in serialized
+
+
+@pytest.mark.asyncio
+async def test_stale_class_is_insufficient_even_if_other_class_fresh():
+    spot, derivatives = await services(3, 3)
+    derivatives.services[0].clock = lambda: 400_000
+    result = get_signal_evidence(
+        "BTC/USDT",
+        spot=spot,
+        derivatives=derivatives,
+        liquidations=LiquidationWindow(),
+        generated_at_ms=1000,
+    )
+    assert result["quality"]["status"] == "insufficient"
+    assert len(result["quality"]["stale"]) == 3
+    assert result["derivatives"]["venues"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_only_read_only_contract_and_live_lock(monkeypatch):
+    api = import_module("quant_trading_platform.api.app")
+    spot, derivatives = await services(3, 3)
+    monkeypatch.setattr(api.app.state, "market_data", spot, raising=False)
+    monkeypatch.setattr(api.app.state, "derivatives", derivatives, raising=False)
+    monkeypatch.setattr(api.app.state, "liquidations", LiquidationWindow(), raising=False)
+    monkeypatch.setattr(api, "now_ms", lambda: 1000)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("GET evidence performed upstream IO or execution")
+
+    monkeypatch.setattr(
+        "quant_trading_platform.connectors.crypto.client.PublicCryptoConnector.place_order",
+        forbidden,
+    )
+    monkeypatch.setattr(httpx.Client, "send", forbidden)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=api.app), base_url="http://test"
+    ) as client:
+        response = await client.get("/signal-evidence/BTC%2FUSDT")
+        assert response.status_code == 200
+        assert response.json()["quality"]["status"] == "healthy"
+        assert (await client.post("/signal-evidence/BTC%2FUSDT")).status_code == 405
+        assert (await client.get("/signal-evidence/LTC%2FUSDT")).status_code == 422
+        assert (await client.get("/health")).json()["live_trading"] == "locked"

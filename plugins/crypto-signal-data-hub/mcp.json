@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "crypto-signal-data-hub": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "quant_trading_platform.mcp.server"]
+    }
+  }
+}

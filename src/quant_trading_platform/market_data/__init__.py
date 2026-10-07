@@ -8,3 +8,10 @@ from quant_trading_platform.market_data.models import (
 )
 
 __all__ = ["NormalizedOrderBook", "OrderBookLevel", "StaleMarketDataError", "normalize_order_book"]
+
+from quant_trading_platform.market_data.derivatives import (
+    DerivativesSnapshot,
+    normalize_derivatives_snapshot,
+)
+
+__all__ += ["DerivativesSnapshot", "normalize_derivatives_snapshot"]

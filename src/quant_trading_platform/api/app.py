@@ -17,11 +17,26 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from quant_trading_platform.audit_log import AuditLog, PersistentAuditLog
 from quant_trading_platform.config import MarketScope, Settings, TradingMode
 from quant_trading_platform.connectors.crypto import BinanceConnector, BybitConnector, OKXConnector
+from quant_trading_platform.connectors.crypto.derivatives import (
+    BinanceDerivativesSource,
+    BybitDerivativesSource,
+    OKXDerivativesSource,
+)
 from quant_trading_platform.explainability import explain_opportunity, explain_paper_execution
 from quant_trading_platform.explainability.reasons import human_reason
+from quant_trading_platform.market_data.derivatives import (
+    SIGNAL_SYMBOLS,
+    DerivativesEvidenceService,
+    MultiDerivativesEvidenceService,
+)
+from quant_trading_platform.market_data.liquidations import (
+    LiquidationWindow,
+    PublicLiquidationCollector,
+)
 from quant_trading_platform.market_data.models import NormalizedOrderBook
 from quant_trading_platform.market_data.okx_candles import OKXCandleSource
 from quant_trading_platform.market_data.service import MarketDataService, MultiMarketDataService
+from quant_trading_platform.market_data.signal_evidence import get_signal_evidence
 from quant_trading_platform.market_data.spot_signal_service import SpotSignalService
 from quant_trading_platform.models import (
     ArbitrageOpportunity,
@@ -110,6 +125,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ) for symbol in configured_market_symbols()]
         )
     app.state.market_data = service
+    derivatives_service = None
+    liquidation_window = LiquidationWindow()
+    collectors: list[PublicLiquidationCollector] = []
+    if settings.derivatives_data_enabled and settings.public_market_data_enabled and (
+        settings.market_scope != MarketScope.RUSSIAN_STOCKS
+    ):
+        derivatives_service = MultiDerivativesEvidenceService([
+            DerivativesEvidenceService(
+                [BinanceDerivativesSource(), BybitDerivativesSource(), OKXDerivativesSource()],
+                symbol=symbol, interval_seconds=settings.derivatives_poll_interval_seconds,
+                max_age_ms=settings.max_derivatives_data_age_ms,
+            ) for symbol in SIGNAL_SYMBOLS
+        ])
+        collectors = [PublicLiquidationCollector(venue, liquidation_window)
+                      for venue in (Venue.BINANCE, Venue.BYBIT, Venue.OKX)]
+    app.state.derivatives = derivatives_service
+    app.state.liquidations = liquidation_window
+    app.state.liquidation_collectors = collectors
     spot_service = None
     if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
         spot_service = SpotSignalService(OKXCandleSource())
@@ -121,10 +154,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await service.start()
         if spot_service is not None:
             await spot_service.start()
+        if derivatives_service is not None:
+            await derivatives_service.start()
+        for collector in collectors:
+            await collector.start()
         await auto_spot.start()
         yield
     finally:
         await auto_spot.stop()
+        for collector in collectors:
+            await collector.stop()
+        if derivatives_service is not None:
+            await derivatives_service.stop()
+        app.state.derivatives = None
+        app.state.liquidations = None
+        app.state.liquidation_collectors = []
         if spot_service is not None:
             await spot_service.stop()
         if service is not None:
@@ -177,6 +221,25 @@ def now_ms() -> int:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "trading_mode": settings.trading_mode.value, "live_trading": "locked"}
+
+
+@app.get("/signal-evidence/{symbol:path}")
+def signal_evidence(symbol: str) -> dict[str, object]:
+    try:
+        result = get_signal_evidence(
+            symbol, spot=getattr(app.state, "market_data", None),
+            derivatives=getattr(app.state, "derivatives", None),
+            liquidations=getattr(app.state, "liquidations", None), generated_at_ms=now_ms(),
+            max_spot_age_ms=settings.max_market_data_age_ms,
+            max_derivatives_age_ms=settings.max_derivatives_data_age_ms,
+        )
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Unsupported signal evidence symbol") from None
+    result["liquidation_sources"] = [
+        {"venue": collector.venue.value, "status": collector.status, "error": collector.error}
+        for collector in getattr(app.state, "liquidation_collectors", [])
+    ]
+    return result
 
 
 @app.get("/settings")

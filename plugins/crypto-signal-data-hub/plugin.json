@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "crypto-signal-data-hub",
+  "version": "0.1.0",
+  "description": "Read-only public market evidence for BTC/USDT, ETH/USDT and SOL/USDT.",
+  "author": {"name": "Quant Trading Platform"},
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Crypto Signal Data Hub",
+        "shortDescription": "Read-only crypto evidence",
+        "longDescription": "Cached spot, derivatives and partial liquidation evidence with freshness and quality. No trading commands or private exchange credentials.",
+        "developerName": "Quant Trading Platform",
+        "category": "Productivity",
+        "capabilities": [],
+        "defaultPrompt": "Проверь качество рыночных данных BTC/USDT, ETH/USDT и SOL/USDT. Недостаточные данные не считай подтверждением сигнала."
+      }
+    }
+  }
+}

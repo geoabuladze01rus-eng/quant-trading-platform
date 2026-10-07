@@ -34,9 +34,12 @@ class Settings(BaseSettings):
     max_trade_notional_usd: Decimal = Field(default=Decimal("100"), gt=0)
     min_expected_net_pct: Decimal = Field(default=Decimal("0.10"), gt=0)
     max_market_data_age_ms: int = Field(default=1_000, gt=0)
+    derivatives_data_enabled: bool = True
+    derivatives_poll_interval_seconds: float = Field(default=15, ge=5, le=300)
+    max_derivatives_data_age_ms: int = Field(default=360_000, gt=0)
     public_market_data_enabled: bool = True
     market_data_symbol: str = "BTC/USDT"
-    market_data_symbols: str = "BTC/USDT,ETH/USDT,LTC/USDT"
+    market_data_symbols: str = "BTC/USDT,ETH/USDT,LTC/USDT,SOL/USDT"
     market_data_poll_interval_seconds: float = Field(default=1.0, ge=0.25, le=60)
     live_order_acceptance_gate: bool = False
 

@@ -60,3 +60,12 @@ balance and exposure inputs are still not connected to real accounts. Fees/slipp
 opportunities are estimates; public book availability is subject to venue rate limits,
 regional restrictions and network outages. Use one application worker for this MVP:
 multiple server processes each start their own pollers and caches.
+
+## Derivatives and liquidation evidence
+
+The sibling [Crypto Signal Data Hub](CRYPTO_SIGNAL_DATA_HUB.md) adds credential-free
+Binance USD-M, Bybit linear and OKX SWAP evidence via `GET /signal-evidence/{symbol}`.
+It reads cached state only, preserves native OI/size units, and fails closed on missing,
+stale, malformed or misidentified sources. Liquidation streams carry partial-coverage
+labels and remain in bounded memory. Spot polling retains LTC and adds SOL. This evidence
+path has no execution capability or coupling to paper commands.

@@ -243,3 +243,10 @@ async def test_insufficient_depth_rejects_both_legs(
     assert report["status"] == "rejected"
     assert report["reason_code"] == "insufficient_depth"
     assert not report["orders"] and not report["fills"]
+
+
+def test_signal_evidence_has_no_command_route() -> None:
+    evidence = [route for route in api.app.routes
+                if getattr(route, "path", "").startswith("/signal-evidence")]
+    assert len(evidence) == 1
+    assert evidence[0].methods == {"GET"}
