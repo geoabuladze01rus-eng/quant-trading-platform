@@ -179,3 +179,40 @@ The generic failed-refresh availability limitation from the previous continuatio
 resolved in production lifecycle through `ProviderCollector`: only the failing provider
 is invalidated, while healthy providers remain available. No real orders, API keys,
 notification sends, main changes, merges or deployment occurred.
+
+## Table-free Gina Flow and expiry continuation — 2026-10-08 (latest totals)
+
+1. Completed: public Gina order-book producer (one bounded read tool, no table lifecycle),
+   original-JSON Decimal notional imbalance for D, complete book guards, source-isolated
+   invalidation/cancellation and optional Native lifecycle binding. Added shared-market
+   independence grouping, five-second book expiry in cache/scoring, earliest-evidence
+   candidate expiry in cached GET, and source-clock/configured freshness for Data Hub flow.
+2. Changed files: new `signal_watch/gina_orderbook.py`,
+   `tests/test_gina_orderbook_evidence.py`; modified `api/app.py`,
+   `signal_watch/intelligence.py`, `signal_watch/providers.py`, `signal_watch/service.py`,
+   their three test files, and both v4 documents (11 files).
+3. Observed TDD failures: missing producer, missing lifecycle binding, duplicate-market
+   independence, stale book contribution/cache, cached accepted candidate past evidence
+   expiry, Data Hub response time substituted for source time, invalid source-flow clocks/
+   identities/ranges. Final focused suite **79 passed**. Final full suite **609 passed**,
+   one existing Starlette deprecation warning. Ruff, mypy (60 source files), compileall and
+   secret hygiene passed. Frontend npm ci and npm run build passed. Coverage run passed 609.
+4. Actual statement coverage: repository **91.41%**, signal_watch **92.37%**,
+   Gina book producer **87.95%**, intelligence **97.26%**, provider cache **87.67%**,
+   scanner **92.59%**. These latest measurements supersede earlier totals.
+5. Actual hosted Gina BTC book was fetched with depth 5. Original packet passed the full
+   producer/cache path at receipt: D `0`, provider snapshot timestamp `1791450065756`,
+   origin `hyperliquid_canonical_usdc_depth`. This is sampled compatibility, not positive
+   flow confirmation or continuous production operation. Independent review found cached
+   candidates outliving depth freshness. Both zero-age and already-aged expiry regressions
+   failed first, then passed after the read-only expiry fix. Additional source-time/invalid
+   Data Hub flow regressions failed first and passed after correction.
+6. Next/blockers: supply and verify a permanent authorized Native executor; complete remaining
+   vendor producers and deployed public REST/WS/exact-horizon acceptance. Table reuse/cleanup
+   is no longer a prerequisite for Gina D, but remains unverified for optional candle/SMA
+   ingestion. Missing upstream timestamps in sampled CryptoAudit/TradingCursor replies
+   remain rejected. Telegram delivery and existing notification workflow are unchanged.
+
+No API key, private account call, real order, notification send, main change, merge or
+production deployment was performed. Cached GET expiry does not write the journal or
+mutate historical candidates.

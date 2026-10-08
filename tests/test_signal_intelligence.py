@@ -111,3 +111,26 @@ def test_noncontributing_origin_cannot_supply_independent_confirmation() -> None
     result = evaluate(observations, now_ms=NOW, data_hub_quality="healthy")
     assert result.confidence == "REJECTED"
     assert result.rejected_reason == "insufficient_independent_evidence"
+
+
+def test_same_hyperliquid_market_tapes_do_not_count_as_two_independent_origins():
+    observations = [
+        Observation("Gina", domain, D(1), NOW, "hyperliquid_canonical_usdc_candles")
+        for domain in "ABC"
+    ]
+    observations.append(Observation("Gina", "D", D(1), NOW, "hyperliquid_canonical_usdc_depth"))
+    result = evaluate(observations, now_ms=NOW, data_hub_quality="healthy")
+    assert result.rejected_reason == "insufficient_independent_evidence"
+
+
+def test_hyperliquid_book_confirmation_expires_after_five_seconds_at_scoring():
+    observations = [
+        Observation("Market Structure", domain, D(1), NOW, "okx_completed_candles")
+        for domain in "ABC"
+    ]
+    observations.append(
+        Observation("Gina", "D", D(1), NOW - 5_001, "hyperliquid_canonical_usdc_depth")
+    )
+    result = evaluate(observations, now_ms=NOW, data_hub_quality="healthy")
+    assert result.domains["D"] == 0
+    assert "stale_or_future:Gina" in result.warnings

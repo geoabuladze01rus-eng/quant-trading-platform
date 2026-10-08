@@ -168,8 +168,18 @@ async def test_complete_candles_and_flow_generate_paper_candidate_without_orders
             "quality": {"status": "healthy"},
             "spot": {
                 "venues": [
-                    {"venue": "binance", "depth_imbalance": "0.8"},
-                    {"venue": "bybit", "depth_imbalance": "0.8"},
+                    {
+                        "venue": "binance",
+                        "depth_imbalance": "0.8",
+                        "timestamp_ms": now,
+                        "received_at_ms": now,
+                    },
+                    {
+                        "venue": "bybit",
+                        "depth_imbalance": "0.8",
+                        "timestamp_ms": now,
+                        "received_at_ms": now,
+                    },
                 ]
             },
         }
@@ -476,3 +486,159 @@ async def test_lifespan_isolates_registered_provider_refreshers(tmp_path, monkey
             api.app.state.signal_watch_providers.status("Gina", "BTC/USDT", now_ms=api.now_ms())
             == "ok"
         )
+
+
+@pytest.mark.asyncio
+async def test_native_executor_binds_gina_book_without_remote_table_creation(tmp_path, monkeypatch):
+    from importlib import import_module
+
+    from quant_trading_platform.config import Settings
+    from quant_trading_platform.signal_watch.gina_orderbook import GinaOrderBookProducer
+
+    api = import_module("quant_trading_platform.api.app")
+
+    async def idle(self):
+        pass
+
+    async def execute(tool, arguments):
+        raise AssertionError("No hosted calls during mocked startup")
+
+    for cls in (
+        api.MultiMarketDataService,
+        api.SpotSignalService,
+        api.MultiDerivativesEvidenceService,
+        api.PublicLiquidationCollector,
+        api.AutomaticSpotPaper,
+        api.WatchService,
+    ):
+        monkeypatch.setattr(cls, "start", idle)
+    monkeypatch.setattr(
+        api, "settings", Settings(_env_file=None, paper_database_path=tmp_path / "paper.db")
+    )
+    monkeypatch.setattr(api.app.state, "signal_watch_external_refreshers", {}, raising=False)
+    monkeypatch.setattr(api.app.state, "read_only_tool_executor", execute, raising=False)
+    async with api.lifespan(api.app):
+        producer = api.app.state.signal_watch_gina
+        assert isinstance(producer, GinaOrderBookProducer)
+        assert api.app.state.signal_watch_collector.refreshers["Gina"] == producer.collect
+        assert producer.cache is api.app.state.signal_watch_providers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_age,expiry", [(0, 5_000), (4_000, 1_000)])
+async def test_cached_candidate_expires_with_its_contributing_gina_book(
+    tmp_path, source_age, expiry
+):
+    from quant_trading_platform.signal_watch.intelligence import Observation
+
+    current = NOW
+
+    class Source:
+        def fetch(self, symbol, *, now_ms):
+            return frame()
+
+    journal = Journal(tmp_path / "watch.db")
+    service = WatchService(
+        WatchEngine(journal),
+        Source(),
+        lambda symbol, now: {"quality": {"status": "healthy"}},
+        external=lambda symbol: [
+            Observation("Gina", "D", D("0.9"), NOW - source_age, "hyperliquid_canonical_usdc_depth")
+        ],
+        clock=lambda: current,
+    )
+    await service.poll_once()
+    state = service.snapshot()["assets"]["BTC/USDT"]
+    assert any(c["confidence"] == "HIGH" for c in state["candidates"])
+    recorded = journal.connection.total_changes
+    current += expiry
+    assert service.snapshot()["assets"]["BTC/USDT"]["status"] == "ok"
+    current += 1
+    expired = service.snapshot()["assets"]["BTC/USDT"]
+    assert expired["status"] == "stale"
+    assert expired["candidates"] == []
+    assert journal.connection.total_changes == recorded
+    assert service.assets["BTC/USDT"]["candidates"]  # GET did not mutate cached records.
+    journal.close()
+
+
+@pytest.mark.asyncio
+async def test_data_hub_flow_preserves_source_clock_and_cached_source_expiry(tmp_path):
+    current = NOW
+
+    class Source:
+        def fetch(self, symbol, *, now_ms):
+            return frame()
+
+    def evidence(symbol, now):
+        return {
+            "generated_at_ms": now,
+            "quality": {"status": "healthy"},
+            "spot": {
+                "venues": [
+                    {
+                        "venue": "binance",
+                        "depth_imbalance": "0.8",
+                        "timestamp_ms": NOW - 400,
+                        "received_at_ms": NOW - 300,
+                    },
+                    {
+                        "venue": "bybit",
+                        "depth_imbalance": "0.8",
+                        "timestamp_ms": NOW - 200,
+                        "received_at_ms": NOW - 100,
+                    },
+                ]
+            },
+        }
+
+    journal = Journal(tmp_path / "watch.db")
+    service = WatchService(WatchEngine(journal), Source(), evidence, clock=lambda: current)
+    await service.poll_once()
+    state = service.snapshot()["assets"]["BTC/USDT"]
+    accepted = next(c for c in state["candidates"] if c["confidence"] == "HIGH")
+    observation = next(o for o in accepted["evidence"] if o["source"] == "Data Hub")
+    assert observation["timestamp_ms"] == NOW - 400
+    current += 601
+    assert service.snapshot()["assets"]["BTC/USDT"]["status"] == "stale"
+    journal.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["missing_clock", "future", "stale", "duplicate", "imbalance"])
+async def test_invalid_data_hub_flow_does_not_become_fresh_from_response_time(tmp_path, fault):
+    class Source:
+        def fetch(self, symbol, *, now_ms):
+            return frame()
+
+    rows = [
+        {"venue": venue, "depth_imbalance": "0.8", "timestamp_ms": NOW, "received_at_ms": NOW}
+        for venue in ("binance", "bybit")
+    ]
+    if fault == "missing_clock":
+        del rows[0]["timestamp_ms"]
+    elif fault == "future":
+        rows[0]["timestamp_ms"] = NOW + 1
+    elif fault == "stale":
+        rows[0]["timestamp_ms"] = NOW - 1_001
+    elif fault == "duplicate":
+        rows[1]["venue"] = "binance"
+    elif fault == "imbalance":
+        rows[0]["depth_imbalance"] = "2"
+    journal = Journal(tmp_path / "watch.db")
+    service = WatchService(
+        WatchEngine(journal),
+        Source(),
+        lambda symbol, now: {
+            "generated_at_ms": now,
+            "quality": {"status": "healthy"},
+            "spot": {"venues": rows},
+        },
+        clock=lambda: NOW,
+    )
+    await service.poll_once()
+    state = service.assets["BTC/USDT"]
+    assert state["status"] == "ok"
+    assert "flow_evidence_unavailable" in state["warnings"]
+    assert all(c["domains"]["D"] == "0" for c in state["candidates"])
+    journal.close()

@@ -126,3 +126,13 @@ def test_concurrent_invalidation_cannot_break_read_only_quality_snapshot():
                 writer.result(timeout=5)
     finally:
         sys.setswitchinterval(previous_interval)
+
+
+def test_gina_book_cache_expires_at_source_freshness_before_generic_report_limit():
+    cache = ProviderEvidenceCache()
+    payload = report(origin="hyperliquid_canonical_usdc_depth")
+    payload["observations"][0]["domain"] = "D"
+    assert cache.update("Gina", payload, now_ms=NOW)
+    assert cache.status("Gina", "BTC/USDT", now_ms=NOW + 5_000) == "ok"
+    assert cache.status("Gina", "BTC/USDT", now_ms=NOW + 5_001) == "stale"
+    assert not cache.observations("BTC/USDT", now_ms=NOW + 5_001)

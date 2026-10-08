@@ -20,6 +20,12 @@ PROVIDERS = frozenset(
 )
 
 
+def independent_origin(origin: str) -> str:
+    if origin in ("hyperliquid_canonical_usdc_candles", "hyperliquid_canonical_usdc_depth"):
+        return "hyperliquid_canonical_usdc"
+    return origin
+
+
 @dataclass(frozen=True)
 class Observation:
     source: str
@@ -40,6 +46,10 @@ class Observation:
             or not self.origin.strip()
         ):
             raise ValueError("Invalid observation/provenance")
+
+
+def observation_max_age_ms(observation: Observation) -> int:
+    return 5_000 if observation.origin == "hyperliquid_canonical_usdc_depth" else 60_000
 
 
 @dataclass(frozen=True)
@@ -74,7 +84,9 @@ def evaluate(
         data_hub_quality == "degraded" and allow_degraded
     )
     for observation in observations:
-        if not 0 <= now_ms - observation.timestamp_ms <= max_age_ms:
+        if not 0 <= now_ms - observation.timestamp_ms <= min(
+            max_age_ms, observation_max_age_ms(observation)
+        ):
             warnings.add("stale_or_future:" + observation.source)
             continue
         if observation.source == "Data Hub" and not hub_usable:
@@ -92,7 +104,7 @@ def evaluate(
     for contributions in contributors.values():
         for contribution in contributions:
             sources.add(contribution.source)
-            origins.add(contribution.origin)
+            origins.add(independent_origin(contribution.origin))
             evidence.add(contribution)
     score = sum(domains.values(), Decimal(0))
     reason = None

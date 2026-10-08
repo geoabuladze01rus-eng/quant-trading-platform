@@ -216,3 +216,49 @@ storage remains exclusively in memory.
 TradingCursor was sampled with BINANCE/BTCUSDT/1m. Its response provided AI completion time,
 levels and a recommendation, but no upstream candle timestamp. It is not accepted as fresh
 confirmation and its recommendation is not copied into the engine or evidence API.
+
+## Gina public order-book producer and candidate expiry
+
+`gina_orderbook.py` adds a table-free continuous collection path. The authorized Native
+executor maps logical `gina_fetch_hyperliquid_orderbook` to the public Gina tool
+`perps.fetchHyperliquidOrderBook` (connector name
+`mcp__codex_apps__ask_gina_perps_fetchhyperliquidorderbook`). It passes only coin and bounded
+depth (default five levels per side), never account, HIP-3 context, credentials or orders.
+The producer uses the original JSON text array, not decoded float structuredContent.
+When an executor is supplied, lifespan installs it through isolated provider orchestration;
+an explicitly registered custom Gina refresher is preserved.
+
+Validation requires exactly the requested contiguous levels on both sides, canonical coin,
+positive finite Decimal prices/sizes, positive integer counts, strictly ordered uncrossed
+prices, consistent midpoints and one provider-reported snapshot timestamp across rows.
+Missing, future, mixed or more-than-five-second-old snapshots fail closed. The producer
+makes one bounded read call; failure and cancellation clear only Gina/asset evidence.
+No remote table is created and no book is persisted.
+
+D strength is `max(0, (bid_notional-ask_notional)/(bid_notional+ask_notional))`, with each
+side notional computed as the sum of exact price times size. This is public depth imbalance,
+not executed order flow or a prediction. USDC prices/notionals are used only within the
+same Hyperliquid snapshot to derive a dimensionless ratio; they are never exposed as
+USDT execution prices. Origin is `hyperliquid_canonical_usdc_depth`. The candle and depth
+origin labels map to the same underlying Hyperliquid market for independence checks.
+Original tape labels remain in journal evidence.
+
+The five-second depth limit applies at ingestion, cache reads, scoring and cached candidate
+reads. Cached assets carry `valid_until_ms`, the earliest contributing evidence/structure
+expiry. GET marks expired assets stale and hides cached candidates without I/O, journal
+writes or mutation of stored historical records. It does not refresh the evidence clock
+just because a cached response was read.
+
+Data Hub depth observations now preserve the oldest source/receipt clock of their distinct
+contributing public spot venues. Missing clocks, duplicated venue identities, future/stale
+rows or out-of-range imbalance exclude that flow component with a sanitized warning.
+Healthy structure/rejection diagnostics remain available. The app supplies its configured
+spot freshness limit (default 1 second) to the scanner; cached candidate expiry respects
+that source deadline when Data Hub flow actually contributes. Evidence-response generation
+time is not substituted for original spot freshness.
+
+A real hosted BTC book packet passed the full producer/cache path at receipt with D strength
+0. This verifies sampled compatibility, not positive evidence, sustained host operation,
+profitability or Telegram receipt. Table lifecycle is no longer needed for this D producer;
+Gina candle/SMA ingestion still requires its separately verified table lifecycle. A permanent
+Native executor deployment and remaining provider transports are still not established.

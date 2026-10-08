@@ -60,6 +60,7 @@ from quant_trading_platform.risk import RiskDecision, RiskEngine, RiskLimits
 from quant_trading_platform.safety import assert_safe_startup
 from quant_trading_platform.signal_watch.collection import ProviderCollector, Refresh
 from quant_trading_platform.signal_watch.engine import WatchEngine
+from quant_trading_platform.signal_watch.gina_orderbook import GinaOrderBookProducer
 from quant_trading_platform.signal_watch.journal import Journal
 from quant_trading_platform.signal_watch.providers import ProviderEvidenceCache
 from quant_trading_platform.signal_watch.service import PublicStructureSource, WatchService
@@ -160,6 +161,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     provider_evidence = ProviderEvidenceCache()
     app.state.signal_watch_providers = provider_evidence
     trader_spy = None
+    gina_book = None
     provider_collector = None
     if settings.signal_watch_enabled and service is not None:
         registered = getattr(app.state, 'signal_watch_external_refreshers', {})
@@ -170,6 +172,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if callable(executor):
             trader_spy = TraderSpyProducer(provider_evidence, cast(ReadOnlyToolExecutor, executor))
             refreshers['TraderSpy'] = trader_spy.collect
+            if 'Gina' not in refreshers:
+                gina_book = GinaOrderBookProducer(
+                    provider_evidence, cast(ReadOnlyToolExecutor, executor))
+                refreshers['Gina'] = gina_book.collect
         if refreshers:
             provider_collector = ProviderCollector(provider_evidence, refreshers)
         watch_journal = Journal(settings.paper_database_path.with_name('signal_watch.sqlite3'))
@@ -181,10 +187,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 max_spot_age_ms=settings.max_market_data_age_ms,
                 max_derivatives_age_ms=settings.max_derivatives_data_age_ms),
             interval_seconds=settings.signal_watch_interval_seconds,
+            max_flow_age_ms=settings.max_market_data_age_ms,
             external=lambda symbol: provider_evidence.observations(symbol, now_ms=now_ms()),
             collect_external=provider_collector.collect if provider_collector is not None else None,
         )
     app.state.signal_watch_traderspy = trader_spy
+    app.state.signal_watch_gina = gina_book
     app.state.signal_watch_collector = provider_collector
     app.state.signal_watch = watch_service
     try:

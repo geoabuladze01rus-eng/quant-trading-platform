@@ -10,7 +10,11 @@ from threading import RLock
 
 from quant_trading_platform.market_data.derivatives import SIGNAL_SYMBOLS, exact_decimal
 from quant_trading_platform.models import normalize_symbol
-from quant_trading_platform.signal_watch.intelligence import PROVIDERS, Observation
+from quant_trading_platform.signal_watch.intelligence import (
+    PROVIDERS,
+    Observation,
+    observation_max_age_ms,
+)
 
 
 class ProviderEvidenceCache:
@@ -58,7 +62,10 @@ class ProviderEvidenceCache:
                     or not 0 <= now_ms - timestamp <= 60_000
                 ):
                     raise ValueError("Unverified evidence/freshness")
-                observations.append(Observation(source, domain, strength, timestamp, origin))
+                observation = Observation(source, domain, strength, timestamp, origin)
+                if now_ms - timestamp > observation_max_age_ms(observation):
+                    raise ValueError("Stale source evidence")
+                observations.append(observation)
             if len({o.domain for o in observations}) != len(observations):
                 raise ValueError("Duplicate provider domains")
             self._values[source, symbol] = tuple(observations)
@@ -94,7 +101,7 @@ class ProviderEvidenceCache:
         key = source, normalize_symbol(symbol)
         status = self._statuses.get(key, "no_data")
         if status == "ok" and any(
-            not 0 <= now_ms - o.timestamp_ms <= 60_000 for o in self._values[key]
+            not 0 <= now_ms - o.timestamp_ms <= observation_max_age_ms(o) for o in self._values[key]
         ):
             return "stale"
         return status

@@ -15,7 +15,7 @@ import httpx
 from quant_trading_platform.market_data.derivatives import SIGNAL_SYMBOLS, exact_decimal
 from quant_trading_platform.market_data.okx_candles import parse_completed_rows
 from quant_trading_platform.signal_watch.engine import Frame, WatchEngine, detect_setups
-from quant_trading_platform.signal_watch.intelligence import Observation
+from quant_trading_platform.signal_watch.intelligence import Observation, observation_max_age_ms
 from quant_trading_platform.signal_watch.outcomes import OutcomeTracker
 from quant_trading_platform.strategies.spot_momentum import DailyCandle
 
@@ -23,6 +23,47 @@ from quant_trading_platform.strategies.spot_momentum import DailyCandle
 class StructureSource(Protocol):
     def fetch(self, symbol: str, *, now_ms: int) -> Frame: ...
     def close(self) -> None: ...
+
+
+def _spot_flow(rows: list[object], now_ms: int, max_age_ms: int) -> tuple[Observation, int]:
+    if not 2 <= len(rows) <= 3:
+        raise ValueError("Insufficient bounded venue flow")
+    venues: set[str] = set()
+    clocks: list[int] = []
+    imbalances: list[Decimal] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("Malformed flow evidence")
+        venue = row.get("venue")
+        timestamp, received = row.get("timestamp_ms"), row.get("received_at_ms")
+        value = exact_decimal(row.get("depth_imbalance"), positive=False)
+        if (
+            not isinstance(venue, str)
+            or venue not in {"binance", "bybit", "okx"}
+            or venue in venues
+            or type(timestamp) is not int
+            or type(received) is not int
+            or min(timestamp, received) <= 0
+            or max(timestamp, received) > now_ms
+            or now_ms - min(timestamp, received) > max_age_ms
+            or value is None
+            or not -1 <= value <= 1
+        ):
+            raise ValueError("Unverified venue flow")
+        venues.add(venue)
+        clocks.append(min(timestamp, received))
+        imbalances.append(max(Decimal(0), value))
+    timestamp = min(clocks)
+    return (
+        Observation(
+            "Data Hub",
+            "D",
+            sum(imbalances, Decimal(0)) / len(imbalances),
+            timestamp,
+            "public_multi_venue_depth",
+        ),
+        timestamp + max_age_ms,
+    )
 
 
 class PublicStructureSource:
@@ -113,9 +154,13 @@ class WatchService:
         collect_external: Callable[[str], Awaitable[bool]] | None = None,
         clock: Callable[[], int] = lambda: time_ns() // 1_000_000,
         interval_seconds: int = 30,
+        max_flow_age_ms: int = 1_000,
     ) -> None:
         if interval_seconds < 15:
             raise ValueError("Unsafe structure polling interval")
+        if type(max_flow_age_ms) is not int or max_flow_age_ms <= 0:
+            raise ValueError("Invalid flow freshness limit")
+        self.max_flow_age_ms = max_flow_age_ms
         self.engine, self.source, self.evidence = engine, source, evidence
         self.external, self.clock, self.interval_seconds = external, clock, interval_seconds
         self.collect_external = collect_external
@@ -171,22 +216,13 @@ class WatchService:
                 )
             spot = evidence.get("spot")
             rows = spot.get("venues") if isinstance(spot, dict) else None
-            timestamp = evidence.get("generated_at_ms")
-            if isinstance(rows, list) and len(rows) >= 2 and type(timestamp) is int:
-                imbalances = []
-                for row in rows:
-                    if not isinstance(row, dict):
-                        raise ValueError("Malformed flow evidence")
-                    value = exact_decimal(row.get("depth_imbalance"), positive=False)
-                    if value is not None:
-                        imbalances.append(max(Decimal(0), min(value, Decimal(1))))
-                if len(imbalances) >= 2:
-                    strength = sum(imbalances, Decimal(0)) / len(imbalances)
-                    observations.append(
-                        Observation(
-                            "Data Hub", "D", strength, timestamp, "public_multi_venue_depth"
-                        )
-                    )
+            flow_deadline = None
+            if isinstance(rows, list) and len(rows) >= 2:
+                try:
+                    flow, flow_deadline = _spot_flow(rows, now, self.max_flow_age_ms)
+                    observations.append(flow)
+                except ValueError:
+                    warnings.append("flow_evidence_unavailable")
             candidates = self.engine.scan(
                 symbol,
                 frame,
@@ -201,9 +237,21 @@ class WatchService:
             for candidate in candidates:
                 self.outcomes.register(candidate, entry_price=frame.close)
             self._calibration = self.outcomes.calibration()
+            deadlines = [frame.timestamp_ms + 60_000] + [
+                observation.timestamp_ms + observation_max_age_ms(observation)
+                for candidate in candidates
+                for observation in candidate.result.evidence
+            ]
+            if flow_deadline is not None and any(
+                observation.origin == "public_multi_venue_depth"
+                for candidate in candidates
+                for observation in candidate.result.evidence
+            ):
+                deadlines.append(flow_deadline)
             self.assets[symbol] = {
                 "status": "ok",
                 "timestamp_ms": now,
+                "valid_until_ms": min(deadlines),
                 "candidates": [c.payload() | {"signal_id": c.signal_id} for c in candidates],
                 "warnings": warnings,
             }
@@ -220,8 +268,12 @@ class WatchService:
         now = self.clock()
         for state in assets.values():
             timestamp = state.get("timestamp_ms")
+            valid_until = state.get("valid_until_ms")
             if state.get("status") == "ok" and (
-                type(timestamp) is not int or not 0 <= now - timestamp <= 60_000
+                type(timestamp) is not int
+                or not 0 <= now - timestamp <= 60_000
+                or type(valid_until) is not int
+                or now > valid_until
             ):
                 state["status"], state["candidates"] = "stale", []
         return {
