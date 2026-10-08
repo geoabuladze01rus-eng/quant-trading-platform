@@ -344,3 +344,10 @@ Current hosted deployment and permanent authorized Native executor remain outsta
 Controlled fifteen-minute clock tests are not a real deployed fifteen-minute observation.
 Next stage: bind verified upstream producers in the actual Native host and run deployed
 read-only collection acceptance. No main edit, merge, notification switch or order occurred.
+
+## Deployment continuation
+
+See `CRYPTO_SIGNAL_WATCH_V4_DEPLOYMENT.md` for actual hosted preview deployment,
+public health/watch/evidence observations and the cancelled, prepared EU migration.
+Earlier “not deployed” statements describe earlier revisions; current ca5cbe9 preview
+is deployed but full acceptance remains incomplete. Working main service is unchanged.
