@@ -140,9 +140,11 @@ def get_signal_evidence(
     )
     required_per_class = 1 if len(venues) == 1 else 2
     usable = len(spot_rows) >= required_per_class and len(derivative_rows) >= required_per_class
-    # Single-venue coverage is valid evidence, not a cross-venue consensus.
+    # A complete OKX-only feed is healthy for its configured scope. This does NOT
+    # imply independent cross-venue corroboration (see the explicit warning below).
+    # Missing/stale required data still fail closed.
     quality = "insufficient" if not usable else (
-        "degraded" if len(venues) == 1 or missing or stale else "healthy"
+        "degraded" if missing or stale else "healthy"
     )
     spread = (
         None
