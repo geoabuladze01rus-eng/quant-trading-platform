@@ -6,7 +6,7 @@ from dataclasses import asdict, replace
 from decimal import Decimal
 from hashlib import sha256
 from time import time
-from typing import Literal
+from typing import Literal, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -58,6 +58,9 @@ from quant_trading_platform.paper_trading.service import PersistentPaperService
 from quant_trading_platform.persistence import SQLitePaperStore
 from quant_trading_platform.risk import RiskDecision, RiskEngine, RiskLimits
 from quant_trading_platform.safety import assert_safe_startup
+from quant_trading_platform.signal_watch.engine import WatchEngine
+from quant_trading_platform.signal_watch.journal import Journal
+from quant_trading_platform.signal_watch.service import PublicStructureSource, WatchService
 from quant_trading_platform.strategies.arbitrage import CrossVenueSpreadMonitor
 
 
@@ -149,6 +152,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.spot_signals = spot_service
     auto_spot = AutomaticSpotPaper(app.state.okx_spot_service, settings, spot_service, service)
     app.state.auto_spot = auto_spot
+    watch_service = None
+    watch_journal = None
+    if settings.signal_watch_enabled and service is not None:
+        watch_journal = Journal(settings.paper_database_path.with_name('signal_watch.sqlite3'))
+        watch_service = WatchService(
+            WatchEngine(watch_journal), PublicStructureSource(),
+            lambda symbol, timestamp: get_signal_evidence(
+                symbol, spot=service, derivatives=derivatives_service,
+                liquidations=liquidation_window, generated_at_ms=timestamp,
+                max_spot_age_ms=settings.max_market_data_age_ms,
+                max_derivatives_age_ms=settings.max_derivatives_data_age_ms),
+            interval_seconds=settings.signal_watch_interval_seconds,
+        )
+    app.state.signal_watch = watch_service
     try:
         if service is not None:
             await service.start()
@@ -159,8 +176,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for collector in collectors:
             await collector.start()
         await auto_spot.start()
+        if watch_service is not None:
+            await watch_service.start()
         yield
     finally:
+        if watch_service is not None:
+            await watch_service.stop()
+        if watch_journal is not None:
+            watch_journal.close()
+        app.state.signal_watch = None
         await auto_spot.stop()
         for collector in collectors:
             await collector.stop()
@@ -221,6 +245,14 @@ def now_ms() -> int:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "trading_mode": settings.trading_mode.value, "live_trading": "locked"}
+
+
+@app.get("/crypto-signal-watch")
+def crypto_signal_watch() -> dict[str, object]:
+    watch = getattr(app.state, 'signal_watch', None)
+    if watch is None:
+        return {'status': 'disabled', 'assets': {}, 'paper_only': True, 'live_execution': False}
+    return cast(dict[str, object], watch.snapshot())
 
 
 @app.get("/signal-evidence/{symbol:path}")
