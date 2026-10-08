@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from time import time
 from typing import Protocol
 
-from quant_trading_platform.market_data.models import NormalizedOrderBook
+from quant_trading_platform.market_data.models import NormalizedOrderBook, normalize_order_book
 from quant_trading_platform.models import MarketQuote, MarketType, Venue, normalize_symbol
 
 
@@ -23,6 +23,7 @@ class SourceState:
     status: str = "no_data"
     error: str | None = None
     book: NormalizedOrderBook | None = None
+    observer_error: str | None = None
 
 
 class MarketDataService:
@@ -38,6 +39,8 @@ class MarketDataService:
     ) -> None:
         if interval_seconds < 0.25 or max_age_ms <= 0:
             raise ValueError("Invalid polling limits")
+        if len({source.venue for source in sources}) != len(sources):
+            raise ValueError("Duplicate market data source")
         self.sources = tuple(sources)
         self.cache = cache
         self.symbol = normalize_symbol(symbol)
@@ -57,6 +60,14 @@ class MarketDataService:
         key = (source.venue.value, self.symbol)
         try:
             book = await asyncio.to_thread(source.get_order_book, self.symbol)
+            # Revalidate the complete depth, not just the top-of-book quote.
+            book = normalize_order_book(
+                book.venue, book.symbol,
+                [(level.price, level.quantity) for level in book.bids],
+                [(level.price, level.quantity) for level in book.asks],
+                book.timestamp_ms, book.received_at_ms,
+                self.max_age_ms, book.timestamp_source, book.market_type,
+            )
             quote = book.to_quote()
             quote.validate()
             if (
@@ -71,9 +82,9 @@ class MarketDataService:
             if age > self.max_age_ms:
                 state.status, state.error = "stale", "stale_market_data"
                 self.cache.pop(key, None)
-                return
-            state.status, state.error = "ok", None
-            self.cache[key] = quote
+            else:
+                state.status, state.error = "ok", None
+                self.cache[key] = quote
         except Exception as error:
             # Never expose upstream URLs, bodies, headers or credentials to callers.
             is_stale = getattr(error, "code", None) == "stale"
@@ -82,7 +93,12 @@ class MarketDataService:
             self.cache.pop(key, None)
 
         if self.on_update is not None:
-            self.on_update()
+            try:
+                self.on_update()
+                state.observer_error = None
+            except Exception:
+                # Observer/storage faults must be visible, but must not kill source polling.
+                state.observer_error = "market_observer_unavailable"
 
     def book_for_simulation(self, venue: Venue, symbol: str) -> NormalizedOrderBook | None:
         """Never return a last-good book after a source error; engine rechecks age."""
@@ -102,14 +118,19 @@ class MarketDataService:
                 0, self.clock() - min(book.timestamp_ms, book.received_at_ms)
             )
             status = state.status
+            error = state.error
             if book is not None and max(book.timestamp_ms, book.received_at_ms) > self.clock():
                 status = "error"
+                error = "future_market_data"
             if status == "ok" and age is not None and age > self.max_age_ms:
                 status = "stale"
+                error = "stale_market_data"
             result.append({
                 "name": venue.value, "market": "crypto", "mode": "public_read_only",
                 "status": status, "live_execution": False, "symbol": self.symbol,
-                "data_age_ms": age, "error": state.error,
+                "data_age_ms": age, "error": error,
+                "observer_error": state.observer_error,
+                "worker_running": self._task is not None and not self._task.done(),
                 "bid": None if book is None else str(book.to_quote().bid),
                 "ask": None if book is None else str(book.to_quote().ask),
                 "timestamp_source": None if book is None else book.timestamp_source,
@@ -171,3 +192,4 @@ class MultiMarketDataService:
 
     async def stop(self) -> None:
         await asyncio.gather(*(service.stop() for service in self.services))
+

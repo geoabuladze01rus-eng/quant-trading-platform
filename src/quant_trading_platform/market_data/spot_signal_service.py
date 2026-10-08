@@ -4,6 +4,7 @@ import asyncio
 from contextlib import suppress
 from dataclasses import asdict
 from time import time
+from typing import cast
 
 from quant_trading_platform.market_data.okx_candles import OKXCandleSource
 from quant_trading_platform.strategies.spot_momentum import (
@@ -27,12 +28,16 @@ class SpotSignalService:
     async def poll_once(self) -> None:
         now_ms = int(time() * 1000)
         try:
+            # Drain every refresh before retrying/closing the shared client, even on failure.
+            results = await asyncio.gather(*(
+                asyncio.to_thread(self.source.fetch, symbol, now_ms=now_ms)
+                for symbol in SYMBOLS
+            ), return_exceptions=True)
+            if any(isinstance(result, BaseException) for result in results):
+                raise ValueError("Completed candles unavailable")
             series = dict(zip(
                 SYMBOLS,
-                await asyncio.gather(*(
-                    asyncio.to_thread(self.source.fetch, symbol, now_ms=now_ms)
-                    for symbol in SYMBOLS
-                )),
+                (cast(tuple[DailyCandle, ...], result) for result in results),
                 strict=True,
             ))
             for candles in series.values():
@@ -47,8 +52,9 @@ class SpotSignalService:
         self.status = "ok"
 
     def snapshot(self) -> dict[str, object]:
+        worker = {"worker_running": self._task is not None and not self._task.done()}
         if self.status != "ok":
-            return {"status": self.status, "paper_only": True, "live_execution": False,
+            return {**worker, "status": self.status, "paper_only": True, "live_execution": False,
                     "signals": [], "reason": "Нет подтверждённых дневных данных OKX."}
         try:
             now_ms = int(time() * 1000)
@@ -57,9 +63,9 @@ class SpotSignalService:
             signals = [trend_signal(symbol, self._series[symbol]) for symbol in SYMBOLS]
             signals.extend(relative_strength_signals(self._series))
         except ValueError:
-            return {"status": "stale", "paper_only": True, "live_execution": False,
+            return {**worker, "status": "stale", "paper_only": True, "live_execution": False,
                     "signals": [], "reason": "Свечи устарели или не совпадают по дате."}
-        return {"status": "ok", "paper_only": True, "live_execution": False,
+        return {**worker, "status": "ok", "paper_only": True, "live_execution": False,
                 "signals": [asdict(signal) for signal in signals],
                 "reason": "Кандидаты для исследования; заявки не создаются."}
 
@@ -80,8 +86,9 @@ class SpotSignalService:
                 await asyncio.wait_for(self._stop.wait(), timeout=self.interval_seconds)
 
     async def start(self) -> None:
-        self._stop.clear()
-        self._task = asyncio.create_task(self._run(), name="okx-spot-research")
+        if self._task is None:
+            self._stop.clear()
+            self._task = asyncio.create_task(self._run(), name="okx-spot-research")
 
     async def stop(self) -> None:
         self._stop.set()
@@ -92,3 +99,4 @@ class SpotSignalService:
             self._task = None
             self._series = {}
             self.source.close()
+

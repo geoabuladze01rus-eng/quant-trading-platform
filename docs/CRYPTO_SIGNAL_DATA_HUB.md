@@ -44,6 +44,13 @@ Independent per-venue/per-symbol polling and bounded backoff prevent a slow or f
 source from blocking another. Errors remove last-good snapshots from usable evidence.
 Freshness is rechecked on reads against both source and receipt time.
 
+`GET /readiness` separately reports `ready`, `degraded`, `not_ready`, or `disabled`,
+source worker liveness and sanitized observer failures. `/health` stays a process
+liveness check, not evidence that feeds or notifications work. A stopped market
+worker is not ready even if its last book is still fresh. Partial sources are
+degraded, not a trade confirmation. This endpoint never polls, sends alerts, or
+writes paper state. The hosted read-only gateway exposes it at `/api/readiness`.
+
 - Healthy: at least two fresh spot and two fresh derivatives venues, with all expected
   REST sources present and fresh.
 - Degraded: the same core minimum is met, but an expected venue is missing/stale.
@@ -95,3 +102,4 @@ not establish live public feed availability.
 The optional [private MCP adapter](CRYPTO_SIGNAL_MCP.md) implements the single approved
 tool over Native stdio, calling only this evidence endpoint. Remote deployment and
 scheduled watcher connection require a verified persistent read-only host.
+

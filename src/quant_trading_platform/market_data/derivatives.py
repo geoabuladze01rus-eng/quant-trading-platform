@@ -189,6 +189,7 @@ class DerivativesEvidenceService:
                 "symbol": self.symbol,
                 "status": self._status(state),
                 "error": state.error,
+                "worker_running": self._task is not None and not self._task.done(),
                 "mode": "public_read_only",
                 "live_execution": False,
             }
@@ -250,3 +251,4 @@ class MultiDerivativesEvidenceService:
 
     async def stop(self) -> None:
         await asyncio.gather(*(s.stop() for s in self.services))
+

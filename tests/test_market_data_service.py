@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from decimal import Decimal
 from importlib import import_module
 from threading import Event
@@ -6,7 +7,11 @@ from threading import Event
 import httpx
 import pytest
 
-from quant_trading_platform.market_data.models import NormalizedOrderBook, normalize_order_book
+from quant_trading_platform.market_data.models import (
+    NormalizedOrderBook,
+    OrderBookLevel,
+    normalize_order_book,
+)
 from quant_trading_platform.market_data.service import MarketDataService, MultiMarketDataService
 from quant_trading_platform.models import MarketQuote, Venue
 
@@ -74,6 +79,7 @@ async def test_source_becomes_stale_without_get_side_effects() -> None:
     await service.poll_once()
     now = 12_000
     assert service.snapshot()[0]["status"] == "stale"
+    assert service.snapshot()[0]["error"] == "stale_market_data"
     assert source.calls == 1
     await service.poll_once()
     assert not cache
@@ -86,6 +92,69 @@ async def test_future_book_never_enters_cache() -> None:
     await service.poll_once()
     assert not cache
     assert service.snapshot()[0]["status"] == "error"
+
+
+def test_duplicate_venues_are_rejected() -> None:
+    with pytest.raises(ValueError, match="Duplicate"):
+        MarketDataService([Source(Venue.OKX), Source(Venue.OKX)], {})
+
+
+@pytest.mark.asyncio
+async def test_injected_invalid_deep_level_never_enters_evidence_cache() -> None:
+    class BadDepth(Source):
+        def get_order_book(self, symbol: str) -> NormalizedOrderBook:
+            book = super().get_order_book(symbol)
+            return replace(book, bids=(*book.bids, OrderBookLevel(Decimal("98"), Decimal("-1"))))
+
+    cache: dict[tuple[str, str], MarketQuote] = {}
+    service = MarketDataService([BadDepth(Venue.OKX)], cache, clock=lambda: 10_000)
+    await service.poll_once()
+    assert cache == {}
+    assert service.snapshot()[0]["status"] == "error"
+    assert service.book_for_simulation(Venue.OKX, "BTC/USDT") is None
+
+
+@pytest.mark.asyncio
+async def test_stale_poll_notifies_quote_invalidation() -> None:
+    updates = []
+    now = 10_000
+    service = MarketDataService(
+        [Source(Venue.OKX)], {}, clock=lambda: now,
+        on_update=lambda: updates.append(dict(service.cache)),
+    )
+    await service.poll_once()
+    now = 12_000
+    await service.poll_once()
+    assert len(updates) == 2
+    assert updates[-1] == {}
+
+
+@pytest.mark.asyncio
+async def test_callback_failure_does_not_kill_polling_or_expose_exception() -> None:
+    source = Source(Venue.OKX)
+
+    def broken_callback() -> None:
+        raise RuntimeError("secret must not escape")
+
+    service = MarketDataService(
+        [source], {}, clock=lambda: 10_000, interval_seconds=0.25,
+        on_update=broken_callback,
+    )
+    await service.start()
+    try:
+        async with asyncio.timeout(1.5):
+            while source.calls < 2:
+                await asyncio.sleep(0.01)
+        row = service.snapshot()[0]
+        assert row["status"] == "ok"
+        assert row["observer_error"] == "market_observer_unavailable"
+        assert "secret" not in str(row)
+    finally:
+        await service.stop()
+
+    service.on_update = lambda: None
+    await service.poll_once()
+    assert service.snapshot()[0]["observer_error"] is None
 
 
 @pytest.mark.asyncio
@@ -171,3 +240,4 @@ async def test_books_reach_api_risk_and_source_status(monkeypatch: pytest.Monkey
         assert venues[0]["status"] == "ok"
         assert venues[-1]["mode"] == "sandbox"
         assert venues[-1]["status"] == "no_data"
+

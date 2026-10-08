@@ -12,6 +12,10 @@ def backend():
     def health():
         return {'status': 'ok', 'live_trading': 'locked'}
 
+    @app.get('/readiness')
+    def readiness():
+        return {'status': 'not_ready', 'live_execution': False}
+
     @app.post('/paper/orders/simulate')
     def write():
         app.state.writes += 1
@@ -29,6 +33,8 @@ def test_public_gateway_reads_health_but_never_dispatches_commands(tmp_path):
     (tmp_path / 'index.html').write_text('<html>dashboard</html>')
     with TestClient(create_hosted_app(app, static_dir=tmp_path)) as client:
         assert client.get('/api/health').json()['live_trading'] == 'locked'
+        assert client.get('/api/readiness').json()['status'] == 'not_ready'
+        assert client.post('/api/readiness').status_code == 403
         assert 'dashboard' in client.get('/').text
         for path in ['/api/paper/orders/simulate', '/api/health', '/api/secret']:
             assert client.post(path).status_code == 403
@@ -90,3 +96,4 @@ def test_hosted_tool_uses_real_backend_and_reports_missing_data(monkeypatch, tmp
         assert evidence['symbol'] == 'BTC/USDT'
         assert evidence['quality']['status'] == 'insufficient'
         assert evidence['execution'] == {'paper_only': True, 'live_execution': False}
+

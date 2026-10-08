@@ -19,7 +19,7 @@ from quant_trading_platform.mcp.evidence_client import EvidenceClient
 from quant_trading_platform.mcp.server import create_server
 
 READ_PATHS = frozenset({
-    '/health', '/settings', '/venues', '/opportunities', '/risk', '/audit',
+    '/health', '/readiness', '/settings', '/venues', '/opportunities', '/risk', '/audit',
     '/reconciliation', '/paper/account', '/paper/balances', '/paper/orders',
     '/paper/fills', '/paper/positions', '/paper/performance', '/paper/reconciliation',
     '/paper/residual-exposure', '/paper/okx/robot', '/paper/okx/account',
@@ -100,3 +100,4 @@ def hosted_app() -> Starlette:
         app, static_dir=Path(environ.get('DASHBOARD_DIST', '/app/frontend-dist')),
         access_token=environ.get('MCP_ACCESS_TOKEN'),
     )
+
