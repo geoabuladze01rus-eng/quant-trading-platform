@@ -44,7 +44,8 @@ def _watch_available(value: dict[str, object], now: int) -> bool:
     for asset in assets.values():
         if not isinstance(asset, dict):
             return False
-        timestamp, deadline = asset.get('timestamp_ms'), asset.get('valid_until_ms')
+        timestamp = asset.get('timestamp_ms')
+        deadline = asset.get('structure_valid_until_ms', asset.get('valid_until_ms'))
         if (asset.get('status') != 'ok' or type(timestamp) is not int
             or type(deadline) is not int or not 0 <= now - timestamp <= 60_000
             or deadline < now):
