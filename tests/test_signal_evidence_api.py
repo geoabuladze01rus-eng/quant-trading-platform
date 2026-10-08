@@ -142,3 +142,38 @@ async def test_get_only_read_only_contract_and_live_lock(monkeypatch):
         assert (await client.post("/signal-evidence/BTC%2FUSDT")).status_code == 405
         assert (await client.get("/signal-evidence/LTC%2FUSDT")).status_code == 422
         assert (await client.get("/health")).json()["live_trading"] == "locked"
+
+
+@pytest.mark.asyncio
+async def test_okx_only_mode_does_not_count_missing_exchanges_as_failures():
+    spot = MarketDataService([SpotSource(Venue.OKX)], {}, clock=lambda: 1000)
+    derivatives = DerivativesEvidenceService([DerivativeSource(Venue.OKX)], clock=lambda: 1000)
+    await spot.poll_once()
+    await derivatives.poll_once()
+    result = get_signal_evidence(
+        "BTC/USDT",
+        spot=spot,
+        derivatives=derivatives,
+        liquidations=LiquidationWindow(),
+        generated_at_ms=1000,
+        venues=(Venue.OKX,),
+    )
+    assert result["quality"]["status"] == "degraded"
+    assert result["quality"]["expected_sources"] == 2
+    assert result["quality"]["fresh_sources"] == 2
+    assert result["quality"]["missing"] == []
+    assert result["quality"]["stale"] == []
+    assert "Single OKX venue: no independent cross-venue corroboration" in result["quality"]["warnings"]
+    assert [row["venue"] for row in result["spot"]["venues"]] == ["okx"]
+    assert [row["venue"] for row in result["derivatives"]["venues"]] == ["okx"]
+    assert result["spot"]["cross_venue_spread"] is None
+
+
+def test_configured_crypto_venues_only_okx_rejects_invalid_inputs(monkeypatch):
+    api = import_module("quant_trading_platform.api.app")
+    monkeypatch.setattr(api.settings, "crypto_market_venues", "okx")
+    assert api.configured_crypto_venues() == (Venue.OKX,)
+    for bad in ("", "okx,okx", "okx,bybit,unknown", "binance,unknown"):
+        monkeypatch.setattr(api.settings, "crypto_market_venues", bad)
+        with pytest.raises(ValueError, match="supported crypto market venues"):
+            api.configured_crypto_venues()
