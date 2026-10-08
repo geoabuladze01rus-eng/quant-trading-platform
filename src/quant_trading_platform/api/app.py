@@ -301,7 +301,8 @@ def signal_evidence(symbol: str) -> dict[str, object]:
     except ValueError:
         raise HTTPException(status_code=422, detail="Unsupported signal evidence symbol") from None
     result["liquidation_sources"] = [
-        {"venue": collector.venue.value, "status": collector.status, "error": collector.error}
+        {"venue": collector.venue.value, "status": collector.status, "error": collector.error,
+         "last_received_at_ms": collector.last_received_at_ms}
         for collector in getattr(app.state, "liquidation_collectors", [])
     ]
     return result

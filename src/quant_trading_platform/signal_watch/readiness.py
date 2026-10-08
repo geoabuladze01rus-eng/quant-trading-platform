@@ -70,8 +70,62 @@ def _evidence_fresh(value: dict[str, object], now: int) -> bool:
     return True
 
 
+def _collection_clocks(
+    snapshots: dict[str, dict[str, object]], watch: dict[str, object], now: int,
+) -> tuple[dict[str, int], list[str]]:
+    """Original validated clocks, never generation/receipt time substituted for REST data."""
+    clocks: dict[str, int] = {}
+    warnings: list[str] = []
+    streams: dict[str, int] = {}
+    streams_valid = len(snapshots) == len(SIGNAL_SYMBOLS)
+    for symbol, snapshot in snapshots.items():
+        if not _evidence_fresh(snapshot, now):
+            streams_valid = False
+            continue
+        for section in ('spot', 'derivatives'):
+            data = snapshot[section]
+            assert isinstance(data, dict)
+            for row in data['venues']:
+                clocks[f'{section}:{row["venue"]}:{symbol}'] = row['timestamp_ms']
+        rows = snapshot.get('liquidation_sources')
+        if (not isinstance(rows, list) or len(rows) != 3
+            or any(not isinstance(row, dict) or not isinstance(row.get('venue'), str)
+                   for row in rows)
+            or {row.get('venue') for row in rows} != {'binance', 'bybit', 'okx'}):
+            streams_valid = False
+            continue
+        for row in rows:
+            timestamp = row.get('last_received_at_ms')
+            if (row.get('status') not in ('connected', 'ok') or row.get('error') is not None
+                or type(timestamp) is not int or not 0 <= now - timestamp <= 40_000):
+                streams_valid = False
+            else:
+                key = 'liquidations:' + row['venue']
+                streams[key] = max(timestamp, streams.get(key, timestamp))
+    if streams_valid:
+        clocks.update(streams)
+    else:
+        warnings.append('websocket_receipts_unverified')
+    rows = watch.get('providers')
+    if isinstance(rows, list):
+        for source in PROVIDERS - {'Market Structure', 'Data Hub'}:
+            for symbol in SIGNAL_SYMBOLS:
+                states = [r for r in rows if isinstance(r, dict)
+                          and r.get('source') == source and r.get('symbol') == symbol]
+                if len(states) != 1:
+                    continue
+                row = states[0]
+                timestamp, deadline = row.get('timestamp_ms'), row.get('valid_until_ms')
+                if (row.get('status') == 'ok' and type(timestamp) is int
+                    and type(deadline) is int and timestamp <= now <= deadline
+                    and 0 <= now - timestamp <= 60_000):
+                    clocks[f'provider:{source}:{symbol}'] = timestamp
+    return clocks, warnings
+
+
 async def check_readiness(
     origin: str, *, client: httpx.AsyncClient, now_ms: int | None = None,
+    hosted: bool = False,
 ) -> dict[str, object]:
     if now_ms is not None and (type(now_ms) is not int or now_ms <= 0):
         raise ValueError('Invalid acceptance clock')
@@ -79,14 +133,15 @@ async def check_readiness(
         return time_ns() // 1_000_000 if now_ms is None else now_ms
 
     # Reuse the evidence bridge's origin, Decimal, identity and freshness validation.
-    evidence = EvidenceClient(origin, client=client, clock=clock)
+    evidence = EvidenceClient(origin, client=client, clock=clock, hosted=hosted)
+    prefix = '/api' if hosted else ''
     external = PROVIDERS - {'Market Structure', 'Data Hub'}
     health: dict[str, object] = {}
     watch: dict[str, object] = {}
     warnings: list[str] = []
     for path, target in (('/health', health), ('/crypto-signal-watch', watch)):
         try:
-            target.update(await _get(client, evidence.origin, path))
+            target.update(await _get(client, evidence.origin, prefix + path))
         except Exception:
             warnings.append('health_unavailable' if path == '/health' else 'watch_unavailable')
     locked = health.get('trading_mode') == 'paper' and health.get('live_trading') == 'locked'
@@ -103,6 +158,7 @@ async def check_readiness(
             states = [row for row in rows if isinstance(row, dict) and row.get('source') == source]
             if (
                 len(states) == 3
+                and all(isinstance(row.get('symbol'), str) for row in states)
                 and {row.get('symbol') for row in states} == set(SIGNAL_SYMBOLS)
                 and all(row.get('status') == 'ok' and type(row.get('valid_until_ms')) is int
                         and row['valid_until_ms'] >= received_at for row in states)
@@ -138,9 +194,11 @@ async def check_readiness(
                 missing.add(source)
     ready = (ready and engine_available and not missing
              and all(q == 'healthy' for q in qualities.values()))
+    collection_clocks, collection_warnings = _collection_clocks(snapshots, watch, finished_at)
     return {
         'scope': 'read_only_snapshot_acceptance', 'status': 'ready' if ready else 'incomplete',
         'engine_available': engine_available, 'paper_live_lock_verified': locked,
         'missing_providers': sorted(missing), 'evidence_quality': qualities,
         'warnings': warnings, 'continuous_collection_verified': False,
+        'collection_clocks': collection_clocks, 'collection_warnings': collection_warnings,
     }

@@ -300,3 +300,47 @@ Telegram delivery and the existing notification workflow remain untouched.
    producers with actual upstream timestamps, sustained REST/WS and exact-horizon data.
    The code is not declared fully operational in production. No notification logic switch,
    API key, private account call, real order, merge or main modification occurred.
+
+## Sampled collection acceptance continuation — 2026-10-08
+
+Completed work: direct/hosted fixed GET paths; original public WS receipt diagnostics;
+39 source clocks for three assets; bounded repeated probes with progression, regression,
+freshness, cancellation and failed-sample checks. Sampled acceptance requires at least
+fifteen observed minutes. Continuous operation remains explicitly unverified.
+
+Changed files in this block:
+
+- `src/quant_trading_platform/api/app.py`
+- `src/quant_trading_platform/mcp/evidence_client.py`
+- `src/quant_trading_platform/signal_watch/readiness.py`
+- `src/quant_trading_platform/signal_watch/acceptance.py`
+- `scripts/check_signal_watch_readiness.py`
+- `tests/test_signal_evidence_api.py`
+- `tests/test_signal_watch_readiness.py`
+- `tests/test_signal_watch_collection_acceptance.py`
+- `docs/CRYPTO_SIGNAL_WATCH_V4.md`
+- `docs/CRYPTO_SIGNAL_WATCH_V4_VERIFICATION.md`
+
+Actual verification after the one-pass review fixes: `ruff check .` passed; `mypy src`
+passed for 62 source files; `pytest -q` passed 652 tests; `python -m compileall src tests`
+passed; staged `python scripts/check_secret_hygiene.py` passed. `npm ci` installed 94 packages; `npm test` passed 11 tests; `npm run build` passed.
+One inherited Starlette TestClient deprecation warning and npm environment http-proxy
+warning remain. Python 3.12.14 and Node 24.19.0 were used locally; this is not a claim of
+local Python 3.11, Node 22 or Docker execution.
+
+Separate full coverage run: 652 passed; repository 91.58%; signal_watch 93.00%;
+acceptance 95.65%; readiness 94.56%. Frontend coverage was not measured.
+Independent review found a malformed WS venue causing TypeError; a reproducing RED test
+preceded the fix. Adjacent malformed provider symbols also reproduced RED and were fixed.
+Both now return unverified/missing evidence instead of crashing. No deferred review minors.
+
+Earlier revision e99e4dc also passed GitHub Actions run 37772343523: Python 3.11 backend
+627 tests, Node 22 frontend 11 tests, and Docker localhost paper/live-lock smoke. Those
+results apply to that revision; checks for this continuation must be read at its own head.
+
+Problems: actual CryptoAudit sentiment has no upstream timestamp; direct Gina candle
+fetch returned chart summary only. These cannot become fresh financial confirmation.
+Current hosted deployment and permanent authorized Native executor remain outstanding.
+Controlled fifteen-minute clock tests are not a real deployed fifteen-minute observation.
+Next stage: bind verified upstream producers in the actual Native host and run deployed
+read-only collection acceptance. No main edit, merge, notification switch or order occurred.

@@ -42,6 +42,49 @@ async def test_probe_is_get_only_keyless_and_missing_sources_prevent_full_readin
 
 
 @pytest.mark.asyncio
+async def test_hosted_probe_uses_only_fixed_public_api_prefix():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path == '/api/health':
+            return httpx.Response(200, json={'trading_mode': 'paper', 'live_trading': 'locked'})
+        if request.url.path == '/api/crypto-signal-watch':
+            return httpx.Response(200, json=watch())
+        return httpx.Response(503)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        report = await check_readiness('https://example.test', client=client, now_ms=NOW,
+                                       hosted=True)
+    assert report['engine_available'] is True
+    assert len(requests) == 5
+    assert all(r.method == 'GET' and r.url.path.startswith('/api/') for r in requests)
+    assert report['continuous_collection_verified'] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('malformed', [[], {}])
+async def test_malformed_provider_symbol_is_reported_missing_without_crash(malformed):
+    value = watch()
+    value['providers'] = [
+        {'source': 'TraderSpy', 'symbol': symbol, 'status': 'ok', 'valid_until_ms': NOW + 1000}
+        for symbol in (malformed, 'ETH/USDT', 'SOL/USDT')
+    ]
+
+    def handler(request):
+        if request.url.path == '/health':
+            return httpx.Response(200, json={'trading_mode': 'paper', 'live_trading': 'locked'})
+        if request.url.path == '/crypto-signal-watch':
+            return httpx.Response(200, json=value)
+        return httpx.Response(503)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        report = await check_readiness('https://example.test', client=client, now_ms=NOW)
+    assert report['status'] == 'incomplete'
+    assert 'TraderSpy' in report['missing_providers']
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     'bad', ['live', 'missing_watch', 'future_watch', 'stale_watch', 'redirect'],
 )

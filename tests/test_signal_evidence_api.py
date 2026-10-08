@@ -1,4 +1,5 @@
 from importlib import import_module
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -115,6 +116,10 @@ async def test_get_only_read_only_contract_and_live_lock(monkeypatch):
     monkeypatch.setattr(api.app.state, "derivatives", derivatives, raising=False)
     monkeypatch.setattr(api.app.state, "liquidations", LiquidationWindow(), raising=False)
     monkeypatch.setattr(api, "now_ms", lambda: 1000)
+    monkeypatch.setattr(api.app.state, 'liquidation_collectors', [SimpleNamespace(
+        venue=Venue.OKX, status='connected', error=None, last_received_at_ms=990,
+        heartbeat_seconds=20,
+    )], raising=False)
 
     def forbidden(*args, **kwargs):
         pytest.fail("GET evidence performed upstream IO or execution")
@@ -130,6 +135,10 @@ async def test_get_only_read_only_contract_and_live_lock(monkeypatch):
         response = await client.get("/signal-evidence/BTC%2FUSDT")
         assert response.status_code == 200
         assert response.json()["quality"]["status"] == "healthy"
+        assert response.json()['liquidation_sources'] == [{
+            'venue': 'okx', 'status': 'connected', 'error': None,
+            'last_received_at_ms': 990,
+        }]
         assert (await client.post("/signal-evidence/BTC%2FUSDT")).status_code == 405
         assert (await client.get("/signal-evidence/LTC%2FUSDT")).status_code == 422
         assert (await client.get("/health")).json()["live_trading"] == "locked"

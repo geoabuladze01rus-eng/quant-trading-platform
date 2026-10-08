@@ -34,6 +34,7 @@ _FIELDS = frozenset(
         "quality",
         "execution",
         "liquidation_sources",
+        "last_received_at_ms",
         "venues",
         "cross_venue_spread",
         "midpoint_range_pct",
@@ -316,6 +317,7 @@ class EvidenceClient:
         *,
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], int] = lambda: time_ns() // 1_000_000,
+        hosted: bool = False,
     ) -> None:
         parsed = urlsplit(origin)
         if (
@@ -337,6 +339,9 @@ class EvidenceClient:
         self._client = client
         self._owns_client = client is None
         self.clock = clock
+        if type(hosted) is not bool:
+            raise ValueError("Invalid hosted gateway selection")
+        self._prefix = "/api" if hosted else ""
 
     async def get_signal_evidence(self, symbol: str) -> dict[str, object]:
         if symbol not in SIGNAL_SYMBOLS:
@@ -345,7 +350,7 @@ class EvidenceClient:
             self._client = httpx.AsyncClient(trust_env=False)
         request = httpx.Request(
             "GET",
-            self.origin + "/signal-evidence/" + quote(symbol, safe=""),
+            self.origin + self._prefix + "/signal-evidence/" + quote(symbol, safe=""),
             extensions={"timeout": httpx.Timeout(5).as_dict()},
         )
         try:

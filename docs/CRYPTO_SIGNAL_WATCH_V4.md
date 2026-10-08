@@ -58,11 +58,12 @@ time. Provider health also expires at its original deadline. Failed responses re
 data. The request uses credential-free uncached GET, rejects redirects and limits the body
 to 1 MiB. Frontend behavior tests run with `npm test` and are included in CI.
 
-## Direct-backend snapshot acceptance
+## Direct and hosted snapshot acceptance
 
 Run `python scripts/check_signal_watch_readiness.py --origin https://BACKEND_HOST` against
-the **direct backend root**, or omit origin for loopback HTTP. It is not a probe for the
-hosted `/api` prefix or the separate Railway function gateway. Only five public GETs are
+the **direct backend root**, or omit origin for loopback HTTP. Add `--hosted` for the
+repository hosted application: only the fixed `/api` prefix is used. The separate Railway
+function gateway does not implement the same watch contract and is not upgraded by this PR. Only five public GETs are
 issued: health, watch, and evidence for three assets. No credentials or command are sent.
 
 The probe validates evidence through the existing MCP adapter and rechecks all source,
@@ -308,3 +309,31 @@ A real hosted BTC book packet passed the full producer/cache path at receipt wit
 profitability or Telegram receipt. Table lifecycle is no longer needed for this D producer;
 Gina candle/SMA ingestion still requires its separately verified table lifecycle. A permanent
 Native executor deployment and remaining provider transports are still not established.
+
+## Sampled REST/WS and Native collection acceptance
+
+`python scripts/check_signal_watch_readiness.py --origin https://BACKEND_HOST --hosted
+--samples 16 --interval-seconds 60` performs sixteen keyless GET-only probes, spanning at
+least fifteen minutes. Omit `--hosted` for a direct backend. Schedules accept 1–241 samples,
+15–60 seconds between probes and at most one hour of scheduled intervals. Request time is
+additional. No journal, source, deployment or notification write is issued by the probe.
+
+Snapshot reports now retain original validated collection clocks. For sampled acceptance,
+every sample must pass snapshot acceptance, contain all 39 clocks (18 spot/derivatives
+venue/asset clocks, 18 external provider/asset clocks and three WS receipt clocks), and
+verify all public liquidation source identities/statuses. WS receipts must be within
+40 seconds, consistent with the default 20-second heartbeat. Receipt activity is not an
+event-completeness guarantee; no liquidation event is required during a quiet market.
+Malformed, duplicate, future or stale receipt evidence cannot count as valid collection.
+
+Each required clock must advance during observation and must never regress. One failed
+sample remains a failure even if later samples recover. A short observation, missing
+provider, frozen stream or unavailable endpoint yields `incomplete` and exit code 1.
+Cancellation stops subsequent probes. Values remain original timestamps and Decimal strings;
+generation time never substitutes for a REST/provider source clock.
+
+`sampled_collection_verified=true` describes only the observed samples. Every report still
+sets `continuous_collection_verified=false`: gaps, exchange completeness, real 15-minute
+outcome acceptance and predictive quality remain unverified. Controlled tests advancing a
+clock do not establish deployed operation. Production Native executor binding and genuine
+timestamped CryptoAudit/TradingCursor/Exa/Blockscout producer evidence remain outstanding.
