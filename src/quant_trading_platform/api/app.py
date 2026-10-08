@@ -359,6 +359,8 @@ def venues() -> list[dict[str, object]]:
             "depth_status": "unavailable", "bid_levels": 0, "ask_levels": 0,
         } for venue in (v.value for v in configured_crypto_venues())
     ]
+    if settings.market_scope == MarketScope.CRYPTO:
+        return crypto
     return [*crypto, {
             "name": "t_invest",
             "market": "russian_stocks",
