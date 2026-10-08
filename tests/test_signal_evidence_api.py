@@ -158,7 +158,7 @@ async def test_okx_only_mode_does_not_count_missing_exchanges_as_failures():
         generated_at_ms=1000,
         venues=(Venue.OKX,),
     )
-    assert result["quality"]["status"] == "degraded"
+    assert result["quality"]["status"] == "healthy"
     assert result["quality"]["expected_sources"] == 2
     assert result["quality"]["fresh_sources"] == 2
     assert result["quality"]["missing"] == []
