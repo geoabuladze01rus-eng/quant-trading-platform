@@ -1,4 +1,5 @@
 from importlib import import_module
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -115,6 +116,10 @@ async def test_get_only_read_only_contract_and_live_lock(monkeypatch):
     monkeypatch.setattr(api.app.state, "derivatives", derivatives, raising=False)
     monkeypatch.setattr(api.app.state, "liquidations", LiquidationWindow(), raising=False)
     monkeypatch.setattr(api, "now_ms", lambda: 1000)
+    monkeypatch.setattr(api.app.state, 'liquidation_collectors', [SimpleNamespace(
+        venue=Venue.OKX, status='connected', error=None, last_received_at_ms=990,
+        heartbeat_seconds=20,
+    )], raising=False)
 
     def forbidden(*args, **kwargs):
         pytest.fail("GET evidence performed upstream IO or execution")
@@ -130,6 +135,90 @@ async def test_get_only_read_only_contract_and_live_lock(monkeypatch):
         response = await client.get("/signal-evidence/BTC%2FUSDT")
         assert response.status_code == 200
         assert response.json()["quality"]["status"] == "healthy"
+        assert response.json()['liquidation_sources'] == [{
+            'venue': 'okx', 'status': 'connected', 'error': None,
+            'last_received_at_ms': 990,
+        }]
         assert (await client.post("/signal-evidence/BTC%2FUSDT")).status_code == 405
         assert (await client.get("/signal-evidence/LTC%2FUSDT")).status_code == 422
         assert (await client.get("/health")).json()["live_trading"] == "locked"
+
+
+@pytest.mark.asyncio
+async def test_okx_only_mode_does_not_count_missing_exchanges_as_failures():
+    spot = MarketDataService([SpotSource(Venue.OKX)], {}, clock=lambda: 1000)
+    derivatives = DerivativesEvidenceService([DerivativeSource(Venue.OKX)], clock=lambda: 1000)
+    await spot.poll_once()
+    await derivatives.poll_once()
+    result = get_signal_evidence(
+        "BTC/USDT",
+        spot=spot,
+        derivatives=derivatives,
+        liquidations=LiquidationWindow(),
+        generated_at_ms=1000,
+        venues=(Venue.OKX,),
+    )
+    assert result["quality"]["status"] == "healthy"
+    assert result["quality"]["expected_sources"] == 2
+    assert result["quality"]["fresh_sources"] == 2
+    assert result["quality"]["missing"] == []
+    assert result["quality"]["stale"] == []
+    assert (
+        "Single OKX venue: no independent cross-venue corroboration"
+        in result["quality"]["warnings"]
+    )
+    assert [row["venue"] for row in result["spot"]["venues"]] == ["okx"]
+    assert [row["venue"] for row in result["derivatives"]["venues"]] == ["okx"]
+    assert result["spot"]["cross_venue_spread"] is None
+
+
+def test_configured_crypto_venues_only_okx_rejects_invalid_inputs(monkeypatch):
+    api = import_module("quant_trading_platform.api.app")
+    monkeypatch.setattr(api.settings, "crypto_market_venues", "okx")
+    assert api.configured_crypto_venues() == (Venue.OKX,)
+    for bad in ("", "okx,okx", "okx,bybit,unknown", "binance,unknown"):
+        monkeypatch.setattr(api.settings, "crypto_market_venues", bad)
+        with pytest.raises(ValueError, match="supported crypto market venues"):
+            api.configured_crypto_venues()
+
+
+
+@pytest.mark.asyncio
+async def test_okx_only_evidence_client_validates_exact_scope_and_fail_closes():
+    import copy
+    import json
+
+    from quant_trading_platform.mcp.evidence_client import _validate
+
+    spot = MarketDataService([SpotSource(Venue.OKX)], {}, clock=lambda: 1000)
+    derivatives = DerivativesEvidenceService(
+        [DerivativeSource(Venue.OKX)], clock=lambda: 1000
+    )
+    await spot.poll_once()
+    await derivatives.poll_once()
+    packet = json.loads(json.dumps(get_signal_evidence(
+        "BTC/USDT", spot=spot, derivatives=derivatives,
+        liquidations=LiquidationWindow(), generated_at_ms=1000,
+        venues=(Venue.OKX,),
+    )))
+    # The lightweight derivatives fixture omits production source metadata.
+    packet["derivatives"]["venues"][0]["source_fields"] = ["fixture_public_ticker"]
+    verified = _validate(packet, "BTC/USDT", 1000)
+    assert verified["quality"]["status"] == "healthy"
+    assert verified["quality"]["expected_sources"] == 2
+    assert [row["venue"] for row in verified["spot"]["venues"]] == ["okx"]
+
+    spoofed = copy.deepcopy(packet)
+    spoofed["spot"]["venues"][0]["venue"] = "bybit"
+    with pytest.raises(ValueError):
+        _validate(spoofed, "BTC/USDT", 1000)
+
+    spoofed = copy.deepcopy(packet)
+    spoofed["quality"]["expected_sources"] = 6
+    with pytest.raises(ValueError):
+        _validate(spoofed, "BTC/USDT", 1000)
+
+    spoofed = copy.deepcopy(packet)
+    spoofed["spot"]["venues"][0]["timestamp_ms"] = -1
+    with pytest.raises(ValueError):
+        _validate(spoofed, "BTC/USDT", 1000)

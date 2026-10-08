@@ -451,6 +451,9 @@ summary { cursor: pointer; }
 .opportunity-details { margin-top: 18px; }
 .opportunity-details summary { color: #d8bf78; }
 .residual-review { margin: 20px 0; }
+.signal-watch { margin: 24px 0; overflow-wrap: anywhere; }
+.watch-asset { border-top: 1px solid #334155; padding: 16px 0; }
+.signal-watch details { padding: 8px 0; }
 .residual-state { border: 1px solid #3b4656; border-radius: 10px; padding: 14px; margin: 12px 0; background: #111923; }
 .residual-flat { border-color: #3b6255; }
 .residual-hedge_required { border-color: #a77d2a; background: #211d13; }

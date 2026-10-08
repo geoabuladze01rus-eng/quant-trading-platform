@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
 from decimal import Decimal
 from hashlib import sha256
 from time import time
-from typing import Literal
+from typing import Literal, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -58,6 +58,19 @@ from quant_trading_platform.paper_trading.service import PersistentPaperService
 from quant_trading_platform.persistence import SQLitePaperStore
 from quant_trading_platform.risk import RiskDecision, RiskEngine, RiskLimits
 from quant_trading_platform.safety import assert_safe_startup
+from quant_trading_platform.signal_watch.collection import ProviderCollector, Refresh
+from quant_trading_platform.signal_watch.composio_notifications import (
+    ComposioEmail,
+    ComposioExecutor,
+    ComposioTelegram,
+)
+from quant_trading_platform.signal_watch.engine import WatchEngine
+from quant_trading_platform.signal_watch.gina_orderbook import GinaOrderBookProducer
+from quant_trading_platform.signal_watch.journal import Journal
+from quant_trading_platform.signal_watch.notifications import Channel, NotificationRouter
+from quant_trading_platform.signal_watch.providers import ProviderEvidenceCache
+from quant_trading_platform.signal_watch.service import PublicStructureSource, WatchService
+from quant_trading_platform.signal_watch.traderspy import ReadOnlyToolExecutor, TraderSpyProducer
 from quant_trading_platform.strategies.arbitrage import CrossVenueSpreadMonitor
 
 
@@ -112,11 +125,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.okx_spot_recovery = app.state.okx_spot_service.recover(
         settings.okx_spot_paper_account_id
     )
+    enabled_venues = configured_crypto_venues()
     service = None
     if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
         service = MultiMarketDataService(
             [MarketDataService(
-                [BinanceConnector(settings), BybitConnector(settings), OKXConnector(settings)],
+                [source for source in (
+                    BinanceConnector(settings) if Venue.BINANCE in enabled_venues else None,
+                    BybitConnector(settings) if Venue.BYBIT in enabled_venues else None,
+                    OKXConnector(settings) if Venue.OKX in enabled_venues else None,
+                ) if source is not None],
                 _QUOTE_CACHE,
                 symbol=symbol,
                 interval_seconds=settings.market_data_poll_interval_seconds,
@@ -133,13 +151,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ):
         derivatives_service = MultiDerivativesEvidenceService([
             DerivativesEvidenceService(
-                [BinanceDerivativesSource(), BybitDerivativesSource(), OKXDerivativesSource()],
+                [source for source in (
+                    BinanceDerivativesSource() if Venue.BINANCE in enabled_venues else None,
+                    BybitDerivativesSource() if Venue.BYBIT in enabled_venues else None,
+                    OKXDerivativesSource() if Venue.OKX in enabled_venues else None,
+                ) if source is not None],
                 symbol=symbol, interval_seconds=settings.derivatives_poll_interval_seconds,
                 max_age_ms=settings.max_derivatives_data_age_ms,
             ) for symbol in SIGNAL_SYMBOLS
         ])
         collectors = [PublicLiquidationCollector(venue, liquidation_window)
-                      for venue in (Venue.BINANCE, Venue.BYBIT, Venue.OKX)]
+                      for venue in enabled_venues]
     app.state.derivatives = derivatives_service
     app.state.liquidations = liquidation_window
     app.state.liquidation_collectors = collectors
@@ -149,6 +171,60 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.spot_signals = spot_service
     auto_spot = AutomaticSpotPaper(app.state.okx_spot_service, settings, spot_service, service)
     app.state.auto_spot = auto_spot
+    watch_service = None
+    watch_journal = None
+    provider_evidence = ProviderEvidenceCache()
+    app.state.signal_watch_providers = provider_evidence
+    trader_spy = None
+    gina_book = None
+    provider_collector = None
+    if settings.signal_watch_enabled and service is not None:
+        registered = getattr(app.state, 'signal_watch_external_refreshers', {})
+        if not isinstance(registered, Mapping):
+            raise ValueError('Invalid Native provider registration')
+        refreshers = dict(cast(Mapping[str, Refresh], registered))
+        executor = getattr(app.state, 'read_only_tool_executor', None)
+        if callable(executor):
+            trader_spy = TraderSpyProducer(provider_evidence, cast(ReadOnlyToolExecutor, executor))
+            refreshers['TraderSpy'] = trader_spy.collect
+            if 'Gina' not in refreshers:
+                gina_book = GinaOrderBookProducer(
+                    provider_evidence, cast(ReadOnlyToolExecutor, executor))
+                refreshers['Gina'] = gina_book.collect
+        if refreshers:
+            provider_collector = ProviderCollector(provider_evidence, refreshers)
+        watch_journal = Journal(settings.paper_database_path.with_name('signal_watch.sqlite3'))
+        channels = getattr(app.state, 'notification_channels', {})
+        if not isinstance(channels, Mapping):
+            raise ValueError('Invalid Native notification channels')
+        channels = dict(cast(Mapping[str, Channel], channels))
+        notification_executor = getattr(app.state, 'composio_notification_executor', None)
+        if notification_executor is not None:
+            notification_executor = cast(ComposioExecutor, notification_executor)
+            channels['telegram'] = ComposioTelegram(notification_executor)
+            channels['email'] = ComposioEmail(notification_executor)
+        if 'telegram' in channels and not isinstance(channels['telegram'], ComposioTelegram):
+            raise ValueError('Telegram requires the fixed-recipient Composio adapter')
+        router = NotificationRouter(watch_journal, channels)
+        app.state.notification_router = router
+        watch_service = WatchService(
+            WatchEngine(watch_journal), PublicStructureSource(),
+            lambda symbol, timestamp: get_signal_evidence(
+                symbol, spot=service, derivatives=derivatives_service,
+                liquidations=liquidation_window, generated_at_ms=timestamp,
+                max_spot_age_ms=settings.max_market_data_age_ms,
+                max_derivatives_age_ms=settings.max_derivatives_data_age_ms,
+                venues=enabled_venues),
+            interval_seconds=settings.signal_watch_interval_seconds,
+            max_flow_age_ms=settings.max_market_data_age_ms,
+            external=lambda symbol: provider_evidence.observations(symbol, now_ms=now_ms()),
+            collect_external=provider_collector.collect if provider_collector is not None else None,
+            notifications=router,
+        )
+    app.state.signal_watch_traderspy = trader_spy
+    app.state.signal_watch_gina = gina_book
+    app.state.signal_watch_collector = provider_collector
+    app.state.signal_watch = watch_service
     try:
         if service is not None:
             await service.start()
@@ -159,8 +235,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         for collector in collectors:
             await collector.start()
         await auto_spot.start()
+        if watch_service is not None:
+            await watch_service.start()
         yield
     finally:
+        if watch_service is not None:
+            await watch_service.stop()
+        if watch_journal is not None:
+            watch_journal.close()
+        app.state.signal_watch = None
+        app.state.signal_watch_providers = None
         await auto_spot.stop()
         for collector in collectors:
             await collector.stop()
@@ -205,6 +289,14 @@ _QUOTE_CACHE: dict[tuple[str, str], MarketQuote] = {}
 _LAST_SIGNALS: dict[tuple[str, str, str], str] = {}
 
 
+def configured_crypto_venues() -> tuple[Venue, ...]:
+    names = tuple(item.strip().lower() for item in settings.crypto_market_venues.split(","))
+    allowed = {"binance": Venue.BINANCE, "bybit": Venue.BYBIT, "okx": Venue.OKX}
+    if not names or len(set(names)) != len(names) or any(name not in allowed for name in names):
+        raise ValueError("Configure unique supported crypto market venues")
+    return tuple(allowed[name] for name in names)
+
+
 def configured_market_symbols() -> tuple[str, ...]:
     symbols = tuple(normalize_symbol(item) for item in settings.market_data_symbols.split(","))
     if not 1 <= len(symbols) <= 10 or len(set(symbols)) != len(symbols):
@@ -223,6 +315,17 @@ def health() -> dict[str, str]:
     return {"status": "ok", "trading_mode": settings.trading_mode.value, "live_trading": "locked"}
 
 
+@app.get("/crypto-signal-watch")
+def crypto_signal_watch() -> dict[str, object]:
+    watch = getattr(app.state, 'signal_watch', None)
+    if watch is None:
+        return {'status': 'disabled', 'assets': {}, 'paper_only': True, 'live_execution': False}
+    result = cast(dict[str, object], watch.snapshot())
+    providers = getattr(app.state, 'signal_watch_providers', None)
+    result['providers'] = [] if providers is None else providers.snapshot(now_ms=now_ms())
+    return result
+
+
 @app.get("/signal-evidence/{symbol:path}")
 def signal_evidence(symbol: str) -> dict[str, object]:
     try:
@@ -232,11 +335,13 @@ def signal_evidence(symbol: str) -> dict[str, object]:
             liquidations=getattr(app.state, "liquidations", None), generated_at_ms=now_ms(),
             max_spot_age_ms=settings.max_market_data_age_ms,
             max_derivatives_age_ms=settings.max_derivatives_data_age_ms,
+            venues=configured_crypto_venues(),
         )
     except ValueError:
         raise HTTPException(status_code=422, detail="Unsupported signal evidence symbol") from None
     result["liquidation_sources"] = [
-        {"venue": collector.venue.value, "status": collector.status, "error": collector.error}
+        {"venue": collector.venue.value, "status": collector.status, "error": collector.error,
+         "last_received_at_ms": collector.last_received_at_ms}
         for collector in getattr(app.state, "liquidation_collectors", [])
     ]
     return result
@@ -265,15 +370,17 @@ def venues() -> list[dict[str, object]]:
         not settings.public_market_data_enabled
         or settings.market_scope == MarketScope.RUSSIAN_STOCKS
     )
-    crypto = service.snapshot() if service is not None else [
+    crypto: list[dict[str, object]] = service.snapshot() if service is not None else [
         {
             "name": venue, "market": "crypto", "status": "disabled" if disabled else "no_data",
             "mode": "disabled" if disabled else "public_read_only", "live_execution": False,
             "symbol": settings.market_data_symbol, "data_age_ms": None, "error": None,
             "bid": None, "ask": None, "timestamp_source": None,
             "depth_status": "unavailable", "bid_levels": 0, "ask_levels": 0,
-        } for venue in ("binance", "bybit", "okx")
+        } for venue in (v.value for v in configured_crypto_venues())
     ]
+    if settings.market_scope == MarketScope.CRYPTO:
+        return crypto
     return [*crypto, {
             "name": "t_invest",
             "market": "russian_stocks",

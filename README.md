@@ -177,3 +177,6 @@ The [optional Native MCP adapter](docs/CRYPTO_SIGNAL_MCP.md) exposes only
 `get_signal_evidence` over stdio. Install with `pip install -e '.[mcp]'` and use the
 portable private package in `plugins/crypto-signal-data-hub/`. Hosted/mobile connection
 remains dependent on a verified deployed read-only backend.
+
+Crypto Signal Watch v4 candidate scanning, confidence, journal and delivery boundaries:
+[implementation and limitations](docs/CRYPTO_SIGNAL_WATCH_V4.md).

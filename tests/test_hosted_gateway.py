@@ -71,6 +71,90 @@ def test_missing_or_short_token_keeps_mcp_closed():
             assert client.post('/mcp/', json=initialize()).status_code == 503
 
 
+def test_public_gateway_exposes_cached_watch_but_blocks_watch_commands(monkeypatch, tmp_path):
+    from importlib import import_module
+
+    import httpx
+    import pytest
+
+    api = import_module('quant_trading_platform.api.app')
+    monkeypatch.setattr(api.settings, 'public_market_data_enabled', False)
+    monkeypatch.setattr(api.settings, 'okx_spot_auto_enabled', False)
+    monkeypatch.setattr(api.settings, 'signal_watch_enabled', False)
+    monkeypatch.setattr(api.settings, 'paper_database_path', tmp_path / 'paper.sqlite3')
+
+    original_send = httpx.Client.send
+
+    def guarded_send(client, *args, **kwargs):
+        if isinstance(client, TestClient):
+            return original_send(client, *args, **kwargs)
+        pytest.fail('Hosted watch GET attempted upstream I/O')
+
+    with TestClient(create_hosted_app(api.app)) as client:
+        monkeypatch.setattr(httpx.Client, 'send', guarded_send)
+        for _ in range(2):
+            reply = client.get('/api/crypto-signal-watch')
+            assert reply.status_code == 200
+            assert reply.json() == {
+                'status': 'disabled', 'assets': {}, 'paper_only': True, 'live_execution': False,
+            }
+        for method in ('POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'):
+            assert client.request(method, '/api/crypto-signal-watch').status_code == 403
+        for path in ('/api/crypto-signal-watch/refresh', '/api/crypto-signal-watch/deliver'):
+            assert client.get(path).status_code == 403
+
+
+def test_hosted_watch_reads_real_cached_candidates_without_polling_or_journal_writes(
+    monkeypatch, tmp_path,
+):
+    import asyncio
+    from importlib import import_module
+
+    from test_signal_intelligence import NOW
+    from test_signal_watch_engine import frame
+
+    from quant_trading_platform.signal_watch.engine import WatchEngine
+    from quant_trading_platform.signal_watch.journal import Journal
+    from quant_trading_platform.signal_watch.service import WatchService
+
+    api = import_module('quant_trading_platform.api.app')
+    monkeypatch.setattr(api.settings, 'public_market_data_enabled', False)
+    monkeypatch.setattr(api.settings, 'okx_spot_auto_enabled', False)
+    monkeypatch.setattr(api.settings, 'signal_watch_enabled', False)
+    monkeypatch.setattr(api.settings, 'paper_database_path', tmp_path / 'paper.sqlite3')
+
+    class Source:
+        allow_poll = True
+
+        def fetch(self, symbol, *, now_ms):
+            assert self.allow_poll, 'Hosted GET must not poll a source'
+            return frame(timestamp_ms=now_ms)
+
+        def close(self):
+            pass
+
+    with Journal(tmp_path / 'journal.sqlite3') as journal:
+        source = Source()
+        watch = WatchService(
+            WatchEngine(journal), source, lambda symbol, now: {}, clock=lambda: NOW,
+        )
+        asyncio.run(watch.poll_once())
+        before = journal.candidates()
+        assert len(before) == 12
+        source.allow_poll = False
+        with TestClient(create_hosted_app(api.app)) as client:
+            monkeypatch.setattr(api.app.state, 'signal_watch', watch)
+            for _ in range(2):
+                reply = client.get('/api/crypto-signal-watch')
+                assert reply.status_code == 200
+                data = reply.json()
+                assert data['paper_only'] is True
+                assert data['live_execution'] is False
+                assert set(data['assets']) == {'BTC/USDT', 'ETH/USDT', 'SOL/USDT'}
+                assert len(data['assets']['BTC/USDT']['candidates']) == 4
+            assert journal.candidates() == before
+
+
 def test_hosted_tool_uses_real_backend_and_reports_missing_data(monkeypatch, tmp_path):
     from importlib import import_module
 

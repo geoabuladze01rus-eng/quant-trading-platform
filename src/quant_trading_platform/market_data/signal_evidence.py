@@ -23,10 +23,15 @@ def get_signal_evidence(
     generated_at_ms: int,
     max_spot_age_ms: int = 1000,
     max_derivatives_age_ms: int = 360_000,
+    venues: tuple[Venue, ...] = (Venue.BINANCE, Venue.BYBIT, Venue.OKX),
 ) -> dict[str, object]:
     symbol = normalize_symbol(symbol)
     if symbol not in SIGNAL_SYMBOLS:
         raise ValueError("Unsupported signal evidence symbol")
+    if not venues or len(set(venues)) != len(venues) or any(
+        venue not in (Venue.BINANCE, Venue.BYBIT, Venue.OKX) for venue in venues
+    ):
+        raise ValueError("Invalid evidence venues")
     spot_rows: list[dict[str, object]] = []
     derivative_rows: list[dict[str, object]] = []
     mids: dict[Venue, Decimal] = {}
@@ -36,7 +41,7 @@ def get_signal_evidence(
     changes: list[dict[str, object]] = []
     spot_states = [] if spot is None else spot.snapshot()
     derivative_states = [] if derivatives is None else derivatives.snapshot()
-    for venue in (Venue.BINANCE, Venue.BYBIT, Venue.OKX):
+    for venue in venues:
         book = None if spot is None else spot.book_for_simulation(venue, symbol)
         snapshot = None if derivatives is None else derivatives.fresh_snapshot(venue, symbol)
         for kind, value, rows, limit in (
@@ -133,8 +138,14 @@ def get_signal_evidence(
             "warning": "Funding intervals may differ; raw rates are contextual only",
         }
     )
-    usable = len(spot_rows) >= 2 and len(derivative_rows) >= 2
-    quality = "insufficient" if not usable else ("degraded" if missing or stale else "healthy")
+    required_per_class = 1 if len(venues) == 1 else 2
+    usable = len(spot_rows) >= required_per_class and len(derivative_rows) >= required_per_class
+    # A complete OKX-only feed is healthy for its configured scope. This does NOT
+    # imply independent cross-venue corroboration (see the explicit warning below).
+    # Missing/stale required data still fail closed.
+    quality = "insufficient" if not usable else (
+        "degraded" if missing or stale else "healthy"
+    )
     spread = (
         None
         if len(mids) < 2
@@ -164,13 +175,15 @@ def get_signal_evidence(
         "quality": {
             "status": quality,
             "fresh_sources": len(spot_rows) + len(derivative_rows),
-            "expected_sources": 6,
+            "expected_sources": 2 * len(venues),
             "missing": missing,
             "stale": stale,
             "warnings": [
                 "Liquidation streams are partial observations",
                 "Native open-interest units are not cross-venue comparable",
                 "Missing data cannot be counted as confirmation",
+                *(["Single OKX venue: no independent cross-venue corroboration"]
+                  if len(venues) == 1 else []),
             ],
         },
         "execution": {"paper_only": True, "live_execution": False},

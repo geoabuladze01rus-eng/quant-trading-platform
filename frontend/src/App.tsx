@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { getAudit, getOpportunities, getRisk, getSettings, getVenues, isMockMode } from './apiClient';
 import type { AuditEvent, DashboardSettings, OpportunityResponse, Risk, Venue } from './types';
 import { PaperAlpha as PaperExecution } from './PaperAlpha';
+import { SignalWatchPanel } from './SignalWatchPanel';
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const pct = (value: number) => `${value.toFixed(2)}%`;
@@ -98,6 +99,7 @@ export function App() {
         <nav className="nav-list" aria-label="Main navigation">
           <a className="nav-item active" href="#command"><Gauge size={18} /> Command center</a>
           <a className="nav-item" href="#opportunities"><BarChart3 size={18} /> Opportunities</a>
+          <a className="nav-item" href="#signal-watch"><Activity size={18} /> Crypto Signal Watch v4</a>
           <a className="nav-item" href="#paper"><WalletCards size={18} /> Paper portfolio</a>
           <a className="nav-item" href="#risk"><ShieldCheck size={18} /> Risk center</a>
           <a className="nav-item" href="#audit"><FileText size={18} /> Audit log</a>
@@ -178,6 +180,7 @@ export function App() {
             </table></div></details></>}
         </section>
 
+        <SignalWatchPanel baseUrl={import.meta.env.VITE_API_BASE_URL} />
         {data && <PaperExecution opportunities={rows} venues={data.venues} audit={data.audit} receivedAt={receivedAt} maxAge={data.settings.max_market_data_age_ms} />}
         <section className="panel-grid" id="risk">
           <article className="panel">

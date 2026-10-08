@@ -34,6 +34,7 @@ _FIELDS = frozenset(
         "quality",
         "execution",
         "liquidation_sources",
+        "last_received_at_ms",
         "venues",
         "cross_venue_spread",
         "midpoint_range_pct",
@@ -163,8 +164,15 @@ def _validate(value: object, symbol: str, now_ms: int) -> dict[str, object]:
         "insufficient",
     ):
         raise ValueError("Invalid evidence quality")
-    if quality.get("expected_sources") != 6 or type(quality.get("fresh_sources")) is not int:
+    expected_count = quality.get("expected_sources")
+    if (
+        expected_count not in (2, 6)
+        or type(expected_count) is not int
+        or type(quality.get("fresh_sources")) is not int
+    ):
         raise ValueError("Invalid evidence counts")
+    # Two-source packets are permitted only for the explicit OKX-only market scope.
+    expected_venues = {"okx"} if expected_count == 2 else {"binance", "bybit", "okx"}
     counts: list[int] = []
     fresh_labels: set[str] = set()
     for kind in ("spot", "derivatives"):
@@ -180,7 +188,7 @@ def _validate(value: object, symbol: str, now_ms: int) -> dict[str, object]:
             raise ValueError("Missing source rows")
         venues: set[str] = set()
         for row in section["venues"]:
-            if not isinstance(row, dict) or row.get("venue") not in ("binance", "bybit", "okx"):
+            if not isinstance(row, dict) or row.get("venue") not in expected_venues:
                 raise ValueError("Invalid source venue")
             venue = row["venue"]
             if venue in venues or row.get("contributing_venues") != [venue]:
@@ -253,11 +261,14 @@ def _validate(value: object, symbol: str, now_ms: int) -> dict[str, object]:
     expected_labels = {
         f"{kind}:{venue}"
         for kind in ("spot", "derivatives")
-        for venue in ("binance", "bybit", "okx")
+        for venue in expected_venues
     }
     if labels != expected_labels - fresh_labels:
         raise ValueError("Inconsistent missing/stale evidence")
-    expected_status = "insufficient" if min(counts) < 2 else "degraded" if labels else "healthy"
+    minimum = 1 if expected_count == 2 else 2
+    expected_status = (
+        "insufficient" if min(counts) < minimum else "degraded" if labels else "healthy"
+    )
     if quality["status"] != expected_status:
         raise ValueError("Untrusted deterministic quality")
     liquidations = value.get("liquidations")
@@ -316,6 +327,7 @@ class EvidenceClient:
         *,
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], int] = lambda: time_ns() // 1_000_000,
+        hosted: bool = False,
     ) -> None:
         parsed = urlsplit(origin)
         if (
@@ -337,6 +349,9 @@ class EvidenceClient:
         self._client = client
         self._owns_client = client is None
         self.clock = clock
+        if type(hosted) is not bool:
+            raise ValueError("Invalid hosted gateway selection")
+        self._prefix = "/api" if hosted else ""
 
     async def get_signal_evidence(self, symbol: str) -> dict[str, object]:
         if symbol not in SIGNAL_SYMBOLS:
@@ -345,7 +360,7 @@ class EvidenceClient:
             self._client = httpx.AsyncClient(trust_env=False)
         request = httpx.Request(
             "GET",
-            self.origin + "/signal-evidence/" + quote(symbol, safe=""),
+            self.origin + self._prefix + "/signal-evidence/" + quote(symbol, safe=""),
             extensions={"timeout": httpx.Timeout(5).as_dict()},
         )
         try:
