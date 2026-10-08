@@ -555,7 +555,8 @@ async def test_cached_candidate_expires_with_its_contributing_gina_book(
     assert service.snapshot()["assets"]["BTC/USDT"]["status"] == "ok"
     current += 1
     expired = service.snapshot()["assets"]["BTC/USDT"]
-    assert expired["status"] == "stale"
+    assert expired["status"] == "ok"
+    assert expired["candidate_status"] == "evidence_expired"
     assert expired["candidates"] == []
     assert journal.connection.total_changes == recorded
     assert service.assets["BTC/USDT"]["candidates"]  # GET did not mutate cached records.
@@ -600,7 +601,8 @@ async def test_data_hub_flow_preserves_source_clock_and_cached_source_expiry(tmp
     observation = next(o for o in accepted["evidence"] if o["source"] == "Data Hub")
     assert observation["timestamp_ms"] == NOW - 400
     current += 601
-    assert service.snapshot()["assets"]["BTC/USDT"]["status"] == "stale"
+    assert service.snapshot()["assets"]["BTC/USDT"]["status"] == "ok"
+    assert service.snapshot()["assets"]["BTC/USDT"]["candidate_status"] == "evidence_expired"
     journal.close()
 
 
@@ -706,6 +708,7 @@ async def test_okx_only_scanner_uses_actual_depth_and_preserves_expiry(tmp_path)
     assert any(e["origin"] == "okx_spot_depth" for e in candidate["evidence"])
     assert service.assets["BTC/USDT"]["valid_until_ms"] == NOW + 600
     current += 601
-    assert service.snapshot()["assets"]["BTC/USDT"]["status"] == "stale"
+    assert service.snapshot()["assets"]["BTC/USDT"]["status"] == "ok"
+    assert service.snapshot()["assets"]["BTC/USDT"]["candidate_status"] == "evidence_expired"
     assert service.snapshot()["assets"]["BTC/USDT"]["candidates"] == []
     journal.close()
