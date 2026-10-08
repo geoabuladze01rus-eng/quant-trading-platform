@@ -220,3 +220,30 @@ async def test_ready_requires_all_evidence_still_fresh_at_probe_completion(
     assert report['evidence_quality']['BTC/USDT'] == early_quality
     assert report['evidence_quality']['ETH/USDT'] == early_quality
     assert report['evidence_quality']['SOL/USDT'] == 'healthy'
+
+
+def test_okx_only_collection_clocks_verify_one_exchange_not_three():
+    from quant_trading_platform.signal_watch.readiness import _collection_clocks
+
+    snapshot = {
+        "generated_at_ms": NOW,
+        "quality": {"expected_sources": 2},
+        "spot": {"venues": [{"venue": "okx", "timestamp_ms": NOW - 100}]},
+        "derivatives": {"venues": [{"venue": "okx", "timestamp_ms": NOW - 100}]},
+        "liquidation_sources": [
+            {"venue": "okx", "status": "connected", "error": None,
+             "last_received_at_ms": NOW - 100},
+        ],
+    }
+    snapshots = {symbol: snapshot for symbol in ("BTC/USDT", "ETH/USDT", "SOL/USDT")}
+    clocks, warnings = _collection_clocks(snapshots, {"providers": []}, NOW)
+    assert not warnings
+    assert len(clocks) == 7
+    assert clocks["spot:okx:BTC/USDT"] == NOW - 100
+    assert clocks["derivatives:okx:ETH/USDT"] == NOW - 100
+    assert clocks["liquidations:okx"] == NOW - 100
+
+    corrupted = {symbol: dict(snapshot) for symbol in snapshots}
+    corrupted["SOL/USDT"]["liquidation_sources"] = []
+    _, warnings = _collection_clocks(corrupted, {"providers": []}, NOW)
+    assert "websocket_receipts_unverified" in warnings
