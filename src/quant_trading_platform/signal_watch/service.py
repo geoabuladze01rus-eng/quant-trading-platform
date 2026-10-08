@@ -260,6 +260,7 @@ class WatchService:
                 "status": "ok",
                 "timestamp_ms": now,
                 "valid_until_ms": min(deadlines),
+                "structure_valid_until_ms": frame.timestamp_ms + 60_000,
                 "candidates": [c.payload() | {"signal_id": c.signal_id} for c in candidates],
                 "warnings": warnings,
             }
@@ -277,13 +278,23 @@ class WatchService:
         for state in assets.values():
             timestamp = state.get("timestamp_ms")
             valid_until = state.get("valid_until_ms")
+            structure_until = state.get("structure_valid_until_ms")
             if state.get("status") == "ok" and (
                 type(timestamp) is not int
                 or not 0 <= now - timestamp <= 60_000
-                or type(valid_until) is not int
-                or now > valid_until
+                or type(structure_until) is not int
+                or now > structure_until
             ):
                 state["status"], state["candidates"] = "stale", []
+            elif state.get("status") == "ok" and (
+                type(valid_until) is not int or now > valid_until
+            ):
+                # The minute candle is still fresh. Only ephemeral candidate
+                # confirmations have expired; do not mislabel the scanner down.
+                state["candidate_status"] = "evidence_expired"
+                state["candidates"] = []
+            elif state.get("status") == "ok":
+                state["candidate_status"] = "current"
         return {
             "generated_at_ms": now,
             "paper_only": True,
