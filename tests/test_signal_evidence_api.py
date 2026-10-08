@@ -201,6 +201,8 @@ async def test_okx_only_evidence_client_validates_exact_scope_and_fail_closes():
         liquidations=LiquidationWindow(), generated_at_ms=1000,
         venues=(Venue.OKX,),
     )))
+    # The lightweight derivatives fixture omits production source metadata.
+    packet["derivatives"]["venues"][0]["source_fields"] = ["fixture_public_ticker"]
     verified = _validate(packet, "BTC/USDT", 1000)
     assert verified["quality"]["status"] == "healthy"
     assert verified["quality"]["expected_sources"] == 2
