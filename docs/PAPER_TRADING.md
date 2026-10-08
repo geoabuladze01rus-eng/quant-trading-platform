@@ -49,10 +49,11 @@ is created. If it detects a mismatch, the account becomes `halted` and new paper
 orders are blocked until the ledger is repaired and a clean restart passes reconciliation.
 Cancellation remains available to release an existing reservation.
 
-The default database is `data/paper_alpha.sqlite3`. For backup, stop the application
-and copy the SQLite database plus any WAL files as one consistent set, or use
-SQLite's online backup API. This alpha does not yet provide automated migrations,
-retention, encryption, multi-host coordination, or restore commands.
+The default database is `data/paper_alpha.sqlite3`. Create and verify consistent
+snapshots with the SQLite online backup utility described in
+[PAPER_DATABASE_BACKUP.md](PAPER_DATABASE_BACKUP.md). Automated migrations,
+retention, encryption, multi-host coordination, and automated restore commands are
+not yet available.
 
 ## API example
 
