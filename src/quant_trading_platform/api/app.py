@@ -350,7 +350,7 @@ def venues() -> list[dict[str, object]]:
         not settings.public_market_data_enabled
         or settings.market_scope == MarketScope.RUSSIAN_STOCKS
     )
-    crypto = service.snapshot() if service is not None else [
+    crypto: list[dict[str, object]] = service.snapshot() if service is not None else [
         {
             "name": venue, "market": "crypto", "status": "disabled" if disabled else "no_data",
             "mode": "disabled" if disabled else "public_read_only", "live_execution": False,
