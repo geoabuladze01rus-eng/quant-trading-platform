@@ -59,9 +59,15 @@ from quant_trading_platform.persistence import SQLitePaperStore
 from quant_trading_platform.risk import RiskDecision, RiskEngine, RiskLimits
 from quant_trading_platform.safety import assert_safe_startup
 from quant_trading_platform.signal_watch.collection import ProviderCollector, Refresh
+from quant_trading_platform.signal_watch.composio_notifications import (
+    ComposioEmail,
+    ComposioExecutor,
+    ComposioTelegram,
+)
 from quant_trading_platform.signal_watch.engine import WatchEngine
 from quant_trading_platform.signal_watch.gina_orderbook import GinaOrderBookProducer
 from quant_trading_platform.signal_watch.journal import Journal
+from quant_trading_platform.signal_watch.notifications import Channel, NotificationRouter
 from quant_trading_platform.signal_watch.providers import ProviderEvidenceCache
 from quant_trading_platform.signal_watch.service import PublicStructureSource, WatchService
 from quant_trading_platform.signal_watch.traderspy import ReadOnlyToolExecutor, TraderSpyProducer
@@ -188,6 +194,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if refreshers:
             provider_collector = ProviderCollector(provider_evidence, refreshers)
         watch_journal = Journal(settings.paper_database_path.with_name('signal_watch.sqlite3'))
+        channels = getattr(app.state, 'notification_channels', {})
+        if not isinstance(channels, Mapping):
+            raise ValueError('Invalid Native notification channels')
+        channels = dict(cast(Mapping[str, Channel], channels))
+        notification_executor = getattr(app.state, 'composio_notification_executor', None)
+        if notification_executor is not None:
+            notification_executor = cast(ComposioExecutor, notification_executor)
+            channels['telegram'] = ComposioTelegram(notification_executor)
+            channels['email'] = ComposioEmail(notification_executor)
+        if 'telegram' in channels and not isinstance(channels['telegram'], ComposioTelegram):
+            raise ValueError('Telegram requires the fixed-recipient Composio adapter')
+        router = NotificationRouter(watch_journal, channels)
+        app.state.notification_router = router
         watch_service = WatchService(
             WatchEngine(watch_journal), PublicStructureSource(),
             lambda symbol, timestamp: get_signal_evidence(
@@ -200,6 +219,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             max_flow_age_ms=settings.max_market_data_age_ms,
             external=lambda symbol: provider_evidence.observations(symbol, now_ms=now_ms()),
             collect_external=provider_collector.collect if provider_collector is not None else None,
+            notifications=router,
         )
     app.state.signal_watch_traderspy = trader_spy
     app.state.signal_watch_gina = gina_book

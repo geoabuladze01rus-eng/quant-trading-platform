@@ -16,6 +16,7 @@ from quant_trading_platform.market_data.derivatives import SIGNAL_SYMBOLS, exact
 from quant_trading_platform.market_data.okx_candles import parse_completed_rows
 from quant_trading_platform.signal_watch.engine import Frame, WatchEngine, detect_setups
 from quant_trading_platform.signal_watch.intelligence import Observation, observation_max_age_ms
+from quant_trading_platform.signal_watch.notifications import NotificationRouter
 from quant_trading_platform.signal_watch.outcomes import OutcomeTracker
 from quant_trading_platform.strategies.spot_momentum import DailyCandle
 
@@ -159,6 +160,7 @@ class WatchService:
         clock: Callable[[], int] = lambda: time_ns() // 1_000_000,
         interval_seconds: int = 30,
         max_flow_age_ms: int = 1_000,
+        notifications: NotificationRouter | None = None,
     ) -> None:
         if interval_seconds < 15:
             raise ValueError("Unsafe structure polling interval")
@@ -168,6 +170,8 @@ class WatchService:
         self.engine, self.source, self.evidence = engine, source, evidence
         self.external, self.clock, self.interval_seconds = external, clock, interval_seconds
         self.collect_external = collect_external
+        self.notifications = notifications
+        self._deliveries: list[dict[str, object]] = []
         self.assets: dict[str, dict[str, object]] = {}
         self.outcomes = OutcomeTracker(engine)
         self._calibration = self.outcomes.calibration()
@@ -256,6 +260,12 @@ class WatchService:
                 for observation in candidate.result.evidence
             ):
                 deadlines.append(flow_deadline)
+            if self.notifications is not None:
+                for candidate in candidates:
+                    await self.notifications.deliver(
+                        candidate, valid_until_ms=min(deadlines), data_blocked=status != "healthy"
+                    )
+                self._deliveries = self.notifications.snapshot()
             self.assets[symbol] = {
                 "status": "ok",
                 "timestamp_ms": now,
@@ -299,6 +309,7 @@ class WatchService:
             "generated_at_ms": now,
             "paper_only": True,
             "live_execution": False,
+            "notifications": copy.deepcopy(self._deliveries),
             "assets": assets,
             "journal": {
                 "kind": "historical_candidates",
