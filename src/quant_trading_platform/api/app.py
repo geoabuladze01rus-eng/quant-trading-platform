@@ -223,6 +223,58 @@ def health() -> dict[str, str]:
     return {"status": "ok", "trading_mode": settings.trading_mode.value, "live_trading": "locked"}
 
 
+@app.get("/readiness")
+def readiness() -> dict[str, object]:
+    """Read cached worker/data health; liveness alone never proves signal readiness."""
+    enabled = settings.public_market_data_enabled and (
+        settings.market_scope != MarketScope.RUSSIAN_STOCKS
+    )
+    market = getattr(app.state, "market_data", None)
+    derivatives = getattr(app.state, "derivatives", None)
+    research = getattr(app.state, "spot_signals", None)
+    spot_rows = [] if market is None else market.snapshot()
+    derivative_rows = [] if derivatives is None else derivatives.snapshot()
+    research_state = None if research is None else research.snapshot()
+    problems = []
+    if not enabled:
+        status = "disabled"
+    elif not spot_rows or not any(row.get("status") == "ok" for row in spot_rows):
+        status = "not_ready"
+        problems.append("fresh_spot_data_unavailable")
+    elif not all(row.get("worker_running") for row in spot_rows):
+        status = "not_ready"
+        problems.append("market_worker_stopped")
+    else:
+        status = "ready"
+    if enabled:
+        if any(row.get("status") != "ok" for row in spot_rows):
+            problems.append("spot_source_unavailable_or_stale")
+        if any(row.get("observer_error") for row in spot_rows):
+            problems.append("market_observer_unavailable")
+        if settings.derivatives_data_enabled and (
+            not derivative_rows or any(
+                row.get("status") != "ok" or not row.get("worker_running")
+                for row in derivative_rows
+            )
+        ):
+            problems.append("derivatives_unavailable_or_stopped")
+        if research_state is None or (
+            research_state.get("status") != "ok" or not research_state.get("worker_running")
+        ):
+            problems.append("daily_research_unavailable_or_stopped")
+        if status == "ready" and problems:
+            status = "degraded"
+    return {
+        "status": status, "generated_at_ms": now_ms(), "problems": problems,
+        "spot_sources": spot_rows, "derivatives_sources": derivative_rows,
+        "daily_research": None if research_state is None else {
+            key: research_state[key] for key in ("status", "worker_running")
+        },
+        "paper_only": True, "live_execution": False,
+        "note": "Data/worker readiness is not a trade signal or delivery confirmation",
+    }
+
+
 @app.get("/signal-evidence/{symbol:path}")
 def signal_evidence(symbol: str) -> dict[str, object]:
     try:
@@ -1102,3 +1154,4 @@ def audit(
     if limit is None and no_filters and offset == 0:
         return items
     return {"items": items, "total": total, "limit": page_size, "offset": offset}
+

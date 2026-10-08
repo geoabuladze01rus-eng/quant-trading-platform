@@ -2,7 +2,8 @@
 
 `Dockerfile.hosted` builds the React dashboard and the existing Python backend in
 one container. Start `quant_trading_platform.mcp.hosted:hosted_app` with Uvicorn
-`--factory`, port 8000. `/api/health` is the readiness endpoint. The backend's
+`--factory`, port 8000. `/api/health` is liveness only. `/api/readiness` checks
+cached data freshness and background workers without network IO or writes. The backend's
 existing lifespan owns polling and liquidation collectors; no duplicate data stack
 or extra collector service is created.
 
@@ -39,3 +40,4 @@ Verification: gateway tests reject command dispatch, unknown routes and unauthor
 MCP; actual HTTP discovery and the real empty-state evidence backend are exercised.
 Health readiness proves startup, not exchange data completeness. Inspect evidence
 quality independently before using a signal.
+
