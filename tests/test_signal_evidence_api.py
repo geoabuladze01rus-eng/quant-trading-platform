@@ -180,3 +180,43 @@ def test_configured_crypto_venues_only_okx_rejects_invalid_inputs(monkeypatch):
         monkeypatch.setattr(api.settings, "crypto_market_venues", bad)
         with pytest.raises(ValueError, match="supported crypto market venues"):
             api.configured_crypto_venues()
+
+
+
+@pytest.mark.asyncio
+async def test_okx_only_evidence_client_validates_exact_scope_and_fail_closes():
+    import copy
+    import json
+
+    from quant_trading_platform.mcp.evidence_client import _validate
+
+    spot = MarketDataService([SpotSource(Venue.OKX)], {}, clock=lambda: 1000)
+    derivatives = DerivativesEvidenceService(
+        [DerivativeSource(Venue.OKX)], clock=lambda: 1000
+    )
+    await spot.poll_once()
+    await derivatives.poll_once()
+    packet = json.loads(json.dumps(get_signal_evidence(
+        "BTC/USDT", spot=spot, derivatives=derivatives,
+        liquidations=LiquidationWindow(), generated_at_ms=1000,
+        venues=(Venue.OKX,),
+    )))
+    verified = _validate(packet, "BTC/USDT", 1000)
+    assert verified["quality"]["status"] == "healthy"
+    assert verified["quality"]["expected_sources"] == 2
+    assert [row["venue"] for row in verified["spot"]["venues"]] == ["okx"]
+
+    spoofed = copy.deepcopy(packet)
+    spoofed["spot"]["venues"][0]["venue"] = "bybit"
+    with pytest.raises(ValueError):
+        _validate(spoofed, "BTC/USDT", 1000)
+
+    spoofed = copy.deepcopy(packet)
+    spoofed["quality"]["expected_sources"] = 6
+    with pytest.raises(ValueError):
+        _validate(spoofed, "BTC/USDT", 1000)
+
+    spoofed = copy.deepcopy(packet)
+    spoofed["spot"]["venues"][0]["timestamp_ms"] = -1
+    with pytest.raises(ValueError):
+        _validate(spoofed, "BTC/USDT", 1000)
