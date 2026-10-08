@@ -279,3 +279,142 @@ async def test_snapshot_is_safe_in_fastapi_worker_thread(tmp_path):
         state = await asyncio.to_thread(service.snapshot)
         assert state["paper_only"] is True
         assert state["outcomes"]["kind"] == "estimated_forward_markout"
+
+
+@pytest.mark.asyncio
+async def test_authorized_external_collector_populates_cache_before_scoring(tmp_path):
+    from quant_trading_platform.signal_watch.providers import ProviderEvidenceCache
+
+    class Source:
+        def fetch(self, symbol, *, now_ms):
+            return frame(timestamp_ms=now_ms)
+
+        def close(self):
+            pass
+
+    cache = ProviderEvidenceCache()
+    calls = []
+
+    async def collect(symbol):
+        calls.append(symbol)
+        return cache.update(
+            "TraderSpy",
+            {
+                "symbol": symbol,
+                "observations": [
+                    {
+                        "domain": "A",
+                        "strength": "1",
+                        "timestamp_ms": NOW,
+                        "origin": "binance_usdm_candles",
+                    }
+                ],
+            },
+            now_ms=NOW,
+        )
+
+    with Journal(tmp_path / "journal.sqlite") as journal:
+        service = WatchService(
+            WatchEngine(journal),
+            Source(),
+            lambda symbol, now: {},
+            external=lambda symbol: cache.observations(symbol, now_ms=NOW),
+            collect_external=collect,
+            clock=lambda: NOW,
+        )
+        await service.poll_once()
+        assert set(calls) == {"BTC/USDT", "ETH/USDT", "SOL/USDT"}
+        rows = service.snapshot()["assets"]["BTC/USDT"]["candidates"]
+        assert any("TraderSpy" in row["sources"] for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_failed_external_collector_keeps_asset_diagnostics_available(tmp_path):
+    class Source:
+        def fetch(self, symbol, *, now_ms):
+            return frame(timestamp_ms=now_ms)
+
+        def close(self):
+            pass
+
+    async def collect(symbol):
+        raise RuntimeError("private upstream detail")
+
+    with Journal(tmp_path / "journal.sqlite") as journal:
+        service = WatchService(
+            WatchEngine(journal),
+            Source(),
+            lambda symbol, now: {},
+            collect_external=collect,
+            clock=lambda: NOW,
+        )
+        await service.poll_once()
+        state = service.snapshot()["assets"]["BTC/USDT"]
+        assert state["status"] == "ok"
+        assert "external_collection_unavailable" in state["warnings"]
+
+
+@pytest.mark.asyncio
+async def test_failed_refresh_excludes_previously_cached_external_evidence(tmp_path):
+    from quant_trading_platform.signal_watch.intelligence import Observation
+
+    class Source:
+        def fetch(self, symbol, *, now_ms):
+            return frame()
+
+    async def collect(symbol):
+        return False
+
+    journal = Journal(tmp_path / "watch.sqlite3")
+    service = WatchService(
+        WatchEngine(journal),
+        Source(),
+        lambda symbol, now: {"quality": {"status": "healthy"}},
+        external=lambda symbol: [Observation("TraderSpy", "A", D(1), NOW, "binance")],
+        collect_external=collect,
+        clock=lambda: NOW,
+    )
+    await service.poll_once()
+    assert all(
+        "TraderSpy" not in candidate["sources"]
+        for state in service.assets.values()
+        for candidate in state["candidates"]
+    )
+    journal.close()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_binds_explicit_native_executor(tmp_path, monkeypatch):
+    from importlib import import_module
+
+    from quant_trading_platform.config import Settings
+    from quant_trading_platform.signal_watch.traderspy import TraderSpyProducer
+
+    api = import_module("quant_trading_platform.api.app")
+
+    async def idle(self):
+        pass
+
+    async def execute(tool, arguments):
+        raise AssertionError("Startup must not call hosted tools in this test")
+
+    for cls in (
+        api.MultiMarketDataService,
+        api.SpotSignalService,
+        api.MultiDerivativesEvidenceService,
+        api.PublicLiquidationCollector,
+        api.AutomaticSpotPaper,
+        api.WatchService,
+    ):
+        monkeypatch.setattr(cls, "start", idle)
+    monkeypatch.setattr(
+        api, "settings", Settings(_env_file=None, paper_database_path=tmp_path / "paper.db")
+    )
+    monkeypatch.setattr(api.app.state, "read_only_tool_executor", execute, raising=False)
+    async with api.lifespan(api.app):
+        assert isinstance(api.app.state.signal_watch_traderspy, TraderSpyProducer)
+        assert (
+            api.app.state.signal_watch.collect_external
+            == api.app.state.signal_watch_traderspy.collect
+        )
+        assert api.app.state.signal_watch_traderspy.cache is api.app.state.signal_watch_providers

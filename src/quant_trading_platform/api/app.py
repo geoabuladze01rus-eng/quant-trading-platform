@@ -62,6 +62,7 @@ from quant_trading_platform.signal_watch.engine import WatchEngine
 from quant_trading_platform.signal_watch.journal import Journal
 from quant_trading_platform.signal_watch.providers import ProviderEvidenceCache
 from quant_trading_platform.signal_watch.service import PublicStructureSource, WatchService
+from quant_trading_platform.signal_watch.traderspy import ReadOnlyToolExecutor, TraderSpyProducer
 from quant_trading_platform.strategies.arbitrage import CrossVenueSpreadMonitor
 
 
@@ -157,7 +158,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     watch_journal = None
     provider_evidence = ProviderEvidenceCache()
     app.state.signal_watch_providers = provider_evidence
+    trader_spy = None
     if settings.signal_watch_enabled and service is not None:
+        executor = getattr(app.state, 'read_only_tool_executor', None)
+        if callable(executor):
+            trader_spy = TraderSpyProducer(provider_evidence, cast(ReadOnlyToolExecutor, executor))
         watch_journal = Journal(settings.paper_database_path.with_name('signal_watch.sqlite3'))
         watch_service = WatchService(
             WatchEngine(watch_journal), PublicStructureSource(),
@@ -168,7 +173,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 max_derivatives_age_ms=settings.max_derivatives_data_age_ms),
             interval_seconds=settings.signal_watch_interval_seconds,
             external=lambda symbol: provider_evidence.observations(symbol, now_ms=now_ms()),
+            collect_external=trader_spy.collect if trader_spy is not None else None,
         )
+    app.state.signal_watch_traderspy = trader_spy
     app.state.signal_watch = watch_service
     try:
         if service is not None:

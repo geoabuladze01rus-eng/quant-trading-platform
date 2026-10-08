@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from decimal import Decimal
 from time import time_ns
@@ -110,6 +110,7 @@ class WatchService:
         evidence: Callable[[str, int], dict[str, object]],
         *,
         external: Callable[[str], Sequence[Observation]] = lambda symbol: (),
+        collect_external: Callable[[str], Awaitable[bool]] | None = None,
         clock: Callable[[], int] = lambda: time_ns() // 1_000_000,
         interval_seconds: int = 30,
     ) -> None:
@@ -117,6 +118,7 @@ class WatchService:
             raise ValueError("Unsafe structure polling interval")
         self.engine, self.source, self.evidence = engine, source, evidence
         self.external, self.clock, self.interval_seconds = external, clock, interval_seconds
+        self.collect_external = collect_external
         self.assets: dict[str, dict[str, object]] = {}
         self.outcomes = OutcomeTracker(engine)
         self._calibration = self.outcomes.calibration()
@@ -131,12 +133,22 @@ class WatchService:
         try:
             now = self.clock()
             frame = await asyncio.to_thread(self.source.fetch, symbol, now_ms=now)
+            warnings = []
+            collection_ok = True
+            if self.collect_external is not None:
+                try:
+                    if not await asyncio.wait_for(self.collect_external(symbol), timeout=10):
+                        collection_ok = False
+                        warnings.append("external_collection_unavailable")
+                except Exception:
+                    collection_ok = False
+                    warnings.append("external_collection_unavailable")
+            now = self.clock()
             evidence = self.evidence(symbol, now)
             quality = evidence.get("quality")
             status = str(quality.get("status")) if isinstance(quality, dict) else "insufficient"
-            warnings = []
             try:
-                observations = list(self.external(symbol))
+                observations = list(self.external(symbol)) if collection_ok else []
                 if any(not isinstance(item, Observation) for item in observations):
                     raise ValueError("Malformed external evidence")
             except Exception:

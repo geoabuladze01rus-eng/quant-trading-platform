@@ -114,3 +114,34 @@ satisfy independent confirmation.
 - Vendor-specific hosted transports and scheduled producer ingestion remain unconnected;
   the normalized in-process boundary is now implemented and wired. Live exchange network
   and exact-horizon capture in deployment remain unverified. No claim of realized profit.
+
+## TraderSpy continuation — 2026-10-08 (latest totals)
+
+1. Implemented original-JSON Decimal TraderSpy adapter, completed-candle freshness,
+   measured EMA/ADX A evidence, fixed underlying origin, two read-tool allowlist,
+   bounded asynchronous collection and cancellation invalidation. Added optional explicit
+   Native executor lifespan binding; no executor is automatically discovered or fabricated.
+2. Changed files: `signal_watch/traderspy.py` (new), `signal_watch/service.py`,
+   `api/app.py`, `tests/test_traderspy_evidence_adapter.py` (new),
+   `tests/test_signal_watch_service.py`, and both v4 documents.
+3. Observed TDD failures: missing adapter import; missing collection interface; old evidence
+   surviving cancellation; failed-refresh cache entering score; missing lifespan binding.
+   Final focused adapter/service suite: **32 passed**. Full suite: **548 passed**, one
+   existing Starlette deprecation warning. Ruff, mypy (57 source files), compileall,
+   secret hygiene, npm ci and frontend build passed. Tests were actually executed locally.
+4. Actual statement coverage: repository **91.43%**, signal_watch **92.91%**,
+   TraderSpy adapter **87.50%**, scanner **92.91%**.
+5. Real hosted TraderSpy BTC candles/indicators were sampled concurrently. Original JSON
+   passed adapter and cache at receipt; A strength `0.8794`, upstream completed timestamp
+   `1791444660000`, origin `binance_usdm_candles`. This establishes sampled payload
+   compatibility, not continuous deployed collection. Independent review found the
+   cancellation cache issue; reproduced RED, fixed GREEN, and re-review found no further
+   important issue. Generic failed refresh currently excludes all external observations
+   for that asset scan, a conservative availability limitation.
+6. Next: bind the deployed authorized Native executor; implement individually verified
+   producers for other named providers; verify deployed exchange REST/WS and exact-horizon
+   observation. CryptoAudit's sampled missing upstream timestamp remains rejected.
+   Hosted Telegram delivery is still disconnected and working notification logic unchanged.
+
+LIVE TRADING remains OFF. No key configuration, real order, notification send, merge,
+main change or deployment was performed in this continuation.

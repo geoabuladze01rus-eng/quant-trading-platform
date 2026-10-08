@@ -144,3 +144,29 @@ statistics on SQLite's owning event-loop thread; GET reads a detached in-memory 
 
 External report callback failures now produce a sanitized warning while retaining healthy
 structure and candidate rejection diagnostics. No notification workflow is switched.
+
+## TraderSpy Native producer
+
+`signal_watch/traderspy.py` adapts the original JSON text from the public
+`traderspy_get_candles` and `traderspy_get_technical_indicators` read tools. It validates
+symbol, 1-minute timeframe, completed consecutive candles, upstream close timestamps,
+matching indicator candle/price, EMA periods and directional ranges. JSON numeric tokens
+are parsed as Decimal; provider AI confidence and prose are ignored. Bullish EMA ordering
+and positive directional dominance contribute `min(ADX / 50, 1)` to A only. The origin is
+`binance_usdm_candles`, so the provider name cannot masquerade as an independent market.
+
+An embedding Native host may explicitly assign an asynchronous callable to
+`app.state.read_only_tool_executor` before application lifespan begins. Signature:
+`async execute(tool_name: str, arguments: dict[str, object]) -> object`.
+Return the original MCP result, including its JSON text content block. The producer invokes
+only the two allowlisted read tools above. No credentials or trading tool configuration is
+accepted. Without this host binding, the producer stays disconnected; ordinary FastAPI
+cannot access the chat tool runtime automatically.
+
+The lifespan binds the producer to the scanner when public crypto scanning is enabled.
+Collection is bounded per asset; errors and cancellation invalidate TraderSpy's cached
+report for that asset. Failed collection excludes external evidence for that scan and
+exposes a sanitized warning while retaining local structure/rejection diagnostics. After
+collection, the scoring clock is refreshed. GET never collects or sends notifications.
+A real hosted BTC response passed this adapter/cache boundary during development. Continuous
+host deployment, other vendor producers and delivery acceptance remain unverified.
