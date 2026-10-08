@@ -6,6 +6,7 @@ supply an auditable observation report, not a plugin's unqualified trading recom
 
 import json
 from decimal import Decimal
+from threading import RLock
 
 from quant_trading_platform.market_data.derivatives import SIGNAL_SYMBOLS, exact_decimal
 from quant_trading_platform.models import normalize_symbol
@@ -14,10 +15,15 @@ from quant_trading_platform.signal_watch.intelligence import PROVIDERS, Observat
 
 class ProviderEvidenceCache:
     def __init__(self) -> None:
+        self._lock = RLock()
         self._values: dict[tuple[str, str], tuple[Observation, ...]] = {}
         self._statuses: dict[tuple[str, str], str] = {}
 
     def update(self, source: str, payload: object, *, now_ms: int) -> bool:
+        with self._lock:
+            return self._update(source, payload, now_ms=now_ms)
+
+    def _update(self, source: str, payload: object, *, now_ms: int) -> bool:
         if source not in PROVIDERS or type(now_ms) is not int or now_ms <= 0:
             raise ValueError("Invalid provider/clock")
         symbol = ""
@@ -72,14 +78,19 @@ class ProviderEvidenceCache:
 
     def observations(self, symbol: str, *, now_ms: int) -> tuple[Observation, ...]:
         symbol = normalize_symbol(symbol)
-        return tuple(
-            o
-            for (source, asset), values in self._values.items()
-            if asset == symbol and self.status(source, asset, now_ms=now_ms) == "ok"
-            for o in values
-        )
+        with self._lock:
+            return tuple(
+                o
+                for (source, asset), values in self._values.items()
+                if asset == symbol and self.status(source, asset, now_ms=now_ms) == "ok"
+                for o in values
+            )
 
     def status(self, source: str, symbol: str, *, now_ms: int) -> str:
+        with self._lock:
+            return self._status(source, symbol, now_ms=now_ms)
+
+    def _status(self, source: str, symbol: str, *, now_ms: int) -> str:
         key = source, normalize_symbol(symbol)
         status = self._statuses.get(key, "no_data")
         if status == "ok" and any(
@@ -89,12 +100,13 @@ class ProviderEvidenceCache:
         return status
 
     def snapshot(self, *, now_ms: int) -> list[dict[str, object]]:
-        return [
-            {
-                "source": source,
-                "symbol": symbol,
-                "status": self.status(source, symbol, now_ms=now_ms),
-            }
-            for source in sorted(PROVIDERS - {"Market Structure", "Data Hub"})
-            for symbol in SIGNAL_SYMBOLS
-        ]
+        with self._lock:
+            return [
+                {
+                    "source": source,
+                    "symbol": symbol,
+                    "status": self.status(source, symbol, now_ms=now_ms),
+                }
+                for source in sorted(PROVIDERS - {"Market Structure", "Data Hub"})
+                for symbol in SIGNAL_SYMBOLS
+            ]

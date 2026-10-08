@@ -145,3 +145,37 @@ satisfy independent confirmation.
 
 LIVE TRADING remains OFF. No key configuration, real order, notification send, merge,
 main change or deployment was performed in this continuation.
+
+## Isolated providers and Gina continuation — 2026-10-08 (latest totals)
+
+1. Completed: isolated multi-provider orchestration and explicit Native refresher
+   registration; original-JSON Gina candle adapter with Decimal/freshness/identity guards;
+   synchronized provider cache reads and invalidation. No autonomous remote-table polling.
+2. Changed files: new `signal_watch/collection.py`, `signal_watch/gina.py`,
+   `tests/test_signal_provider_collection.py`, `tests/test_gina_evidence_adapter.py`;
+   modified `api/app.py`, `signal_watch/providers.py`, `tests/test_signal_watch_service.py`,
+   `tests/test_signal_provider_evidence.py`, and both v4 documents.
+3. TDD observed missing adapter/orchestrator imports, missing lifecycle binding, and actual
+   concurrent invalidation failure (`dictionary changed size during iteration`). Implemented
+   fixes passed focused **51 tests**. Full final suite: **575 passed**, one existing
+   Starlette deprecation warning. Ruff, mypy (59 source files), compileall and secret
+   hygiene passed. Frontend npm ci and npm run build passed. Coverage run also passed 575.
+4. Actual statement coverage: repository **91.47%**, signal_watch **93.00%**,
+   orchestration **97.14%**, Gina adapter **89.80%**, provider cache **88.57%**.
+5. Real Gina public canonical BTC candles were queried via its SQL interface, with OHLCV
+   returned as strings. The original JSON passed adapter/cache at receipt, strength `0`,
+   source completed timestamp `1791448920000`. This establishes payload compatibility,
+   not positive confirmation or continuous operation. TradingCursor's real BINANCE/BTCUSDT
+   1m AI response lacked upstream candle time and was not accepted as confirmation.
+   Independent review found no critical/important issue. Canonical provenance with legacy
+   null venue fields depends on the producer's stipulated canonical table request.
+6. Next/blockers: continuously hosted Native executor/refresher binding is not present;
+   Gina table reuse/cleanup/refresh is not verified and is not wired as periodic collection;
+   other provider-specific producers remain incomplete. Verify deployed public REST/WS and
+   exact-horizon observation. Existing notification delivery is unchanged and disconnected
+   from these new boundaries. No full-operation claim is made.
+
+The generic failed-refresh availability limitation from the previous continuation is
+resolved in production lifecycle through `ProviderCollector`: only the failing provider
+is invalidated, while healthy providers remain available. No real orders, API keys,
+notification sends, main changes, merges or deployment occurred.

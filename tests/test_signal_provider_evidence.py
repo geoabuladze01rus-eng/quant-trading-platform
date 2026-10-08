@@ -84,3 +84,45 @@ def test_cached_provider_statuses_are_read_only_and_report_missing_sources():
     )
     assert any(r["source"] == "TraderSpy" and r["status"] == "no_data" for r in status)
     assert cache.snapshot(now_ms=NOW) == status
+
+
+def test_concurrent_invalidation_cannot_break_read_only_quality_snapshot():
+    import sys
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    cache = ProviderEvidenceCache()
+    cache.update("TraderSpy", report(), now_ms=NOW)
+    started, stop = Event(), Event()
+    previous_interval = sys.getswitchinterval()
+
+    def mutate():
+        started.set()
+        while not stop.is_set():
+            cache.update("Gina", report(), now_ms=NOW)
+            cache.update("Gina", {"symbol": "BTC/USDT", "observations": []}, now_ms=NOW)
+
+    sys.setswitchinterval(0.000001)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            writer = pool.submit(mutate)
+            started.wait()
+            try:
+                for _ in range(1000):
+                    rows = cache.snapshot(now_ms=NOW)
+                    assert (
+                        next(
+                            r["status"]
+                            for r in rows
+                            if r["source"] == "TraderSpy" and r["symbol"] == "BTC/USDT"
+                        )
+                        == "ok"
+                    )
+                    assert any(
+                        o.source == "TraderSpy" for o in cache.observations("BTC/USDT", now_ms=NOW)
+                    )
+            finally:
+                stop.set()
+                writer.result(timeout=5)
+    finally:
+        sys.setswitchinterval(previous_interval)

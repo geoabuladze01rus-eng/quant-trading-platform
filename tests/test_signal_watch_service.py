@@ -415,6 +415,64 @@ async def test_lifespan_binds_explicit_native_executor(tmp_path, monkeypatch):
         assert isinstance(api.app.state.signal_watch_traderspy, TraderSpyProducer)
         assert (
             api.app.state.signal_watch.collect_external
+            == api.app.state.signal_watch_collector.collect
+        )
+        assert (
+            api.app.state.signal_watch_collector.refreshers["TraderSpy"]
             == api.app.state.signal_watch_traderspy.collect
         )
         assert api.app.state.signal_watch_traderspy.cache is api.app.state.signal_watch_providers
+
+
+@pytest.mark.asyncio
+async def test_lifespan_isolates_registered_provider_refreshers(tmp_path, monkeypatch):
+    from importlib import import_module
+
+    from quant_trading_platform.config import Settings
+    from quant_trading_platform.signal_watch.collection import ProviderCollector
+
+    api = import_module("quant_trading_platform.api.app")
+
+    async def idle(self):
+        pass
+
+    async def refresh(symbol):
+        return api.app.state.signal_watch_providers.update(
+            "Gina",
+            {
+                "symbol": symbol,
+                "observations": [
+                    {
+                        "domain": "A",
+                        "strength": "1",
+                        "timestamp_ms": api.now_ms(),
+                        "origin": "hyperliquid_canonical_usdc_candles",
+                    }
+                ],
+            },
+            now_ms=api.now_ms(),
+        )
+
+    for cls in (
+        api.MultiMarketDataService,
+        api.SpotSignalService,
+        api.MultiDerivativesEvidenceService,
+        api.PublicLiquidationCollector,
+        api.AutomaticSpotPaper,
+        api.WatchService,
+    ):
+        monkeypatch.setattr(cls, "start", idle)
+    monkeypatch.setattr(
+        api, "settings", Settings(_env_file=None, paper_database_path=tmp_path / "paper.db")
+    )
+    monkeypatch.setattr(api.app.state, "read_only_tool_executor", None, raising=False)
+    monkeypatch.setattr(
+        api.app.state, "signal_watch_external_refreshers", {"Gina": refresh}, raising=False
+    )
+    async with api.lifespan(api.app):
+        assert isinstance(api.app.state.signal_watch_collector, ProviderCollector)
+        assert await api.app.state.signal_watch.collect_external("BTC/USDT")
+        assert (
+            api.app.state.signal_watch_providers.status("Gina", "BTC/USDT", now_ms=api.now_ms())
+            == "ok"
+        )

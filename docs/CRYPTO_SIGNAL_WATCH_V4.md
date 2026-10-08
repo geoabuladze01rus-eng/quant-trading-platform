@@ -170,3 +170,49 @@ exposes a sanitized warning while retaining local structure/rejection diagnostic
 collection, the scoring clock is refreshed. GET never collects or sends notifications.
 A real hosted BTC response passed this adapter/cache boundary during development. Continuous
 host deployment, other vendor producers and delivery acceptance remain unverified.
+
+## Isolated Native refreshers and Gina candle ingestion
+
+An embedding host can register `app.state.signal_watch_external_refreshers` before
+lifespan startup: a mapping from approved external provider name to
+`async refresh(symbol: str) -> bool`. Each refresher must validate its actual upstream
+response and update `app.state.signal_watch_providers`; return exactly `True` only for
+successful collection. Registered callbacks are explicitly authorized host code, not
+arbitrary discovered tools. When a read-only executor is also supplied, the built-in
+TraderSpy refresher is installed through the same orchestration boundary.
+
+`ProviderCollector` runs refreshers independently with an 8-second deadline inside the
+scanner's 10-second deadline. Failure, malformed return, timeout or cancellation clears
+only that provider/asset evidence. Orchestration returning `True` means isolated collection
+completed; it does not mean every provider succeeded. Per-provider cached quality records
+show errors. Other healthy providers, including independently supplied reports, remain
+available. Direct single-collector injection still excludes all external observations on
+failure; the production lifespan now uses isolated orchestration.
+
+`ProviderEvidenceCache` synchronizes updates, invalidation, observation reads and quality
+snapshots with one reentrant lock. Background ingestion and FastAPI worker reads cannot
+iterate a mutating dictionary or read inconsistent status/value records. GET still performs
+no upstream I/O and no persistent write.
+
+`gina.adapt_gina_candles` ingests original JSON row results from Gina's read-only SQL query
+on a canonical Hyperliquid candle table. The producer must create/query canonical coin,
+1m, closedOnly data, without HIP-3 provider context, and use the exact returned table name.
+Do not infer canonical provenance from an arbitrary table: actual sampled legacy venue
+fields were null, so this request binding is part of the producer's required contract.
+Query OHLCV with `CAST(... AS VARCHAR)` to avoid Python float calculations, retaining
+vendor-supplied numeric precision; upstream table precision cannot be reconstructed.
+No Hyperliquid USDC price is relabelled as a USDT price. Only measured structure evidence
+is produced, with origin `hyperliquid_canonical_usdc_candles`.
+
+The adapter requires 25–50 consecutive completed candles, asset/timeframe identity,
+consistent inclusive close timestamps, observedAt not in the future, source freshness,
+finite prices/volume and valid ranges. A gets strength 1 only when last close > SMA20 >
+previous SMA20; otherwise 0. AI summaries and chartRendered receipts are not confirmation.
+A real fresh BTC SQL sample passed adapter/cache with strength 0, establishing compatibility,
+not bullish confirmation. No periodic remote table creation is wired: table reuse, cleanup
+and hosted refresh must be verified before enabling a continuous producer. Liquidation
+storage remains exclusively in memory.
+
+TradingCursor was sampled with BINANCE/BTCUSDT/1m. Its response provided AI completion time,
+levels and a recommendation, but no upstream candle timestamp. It is not accepted as fresh
+confirmation and its recommendation is not copied into the engine or evidence API.

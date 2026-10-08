@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
 from decimal import Decimal
@@ -58,6 +58,7 @@ from quant_trading_platform.paper_trading.service import PersistentPaperService
 from quant_trading_platform.persistence import SQLitePaperStore
 from quant_trading_platform.risk import RiskDecision, RiskEngine, RiskLimits
 from quant_trading_platform.safety import assert_safe_startup
+from quant_trading_platform.signal_watch.collection import ProviderCollector, Refresh
 from quant_trading_platform.signal_watch.engine import WatchEngine
 from quant_trading_platform.signal_watch.journal import Journal
 from quant_trading_platform.signal_watch.providers import ProviderEvidenceCache
@@ -159,10 +160,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     provider_evidence = ProviderEvidenceCache()
     app.state.signal_watch_providers = provider_evidence
     trader_spy = None
+    provider_collector = None
     if settings.signal_watch_enabled and service is not None:
+        registered = getattr(app.state, 'signal_watch_external_refreshers', {})
+        if not isinstance(registered, Mapping):
+            raise ValueError('Invalid Native provider registration')
+        refreshers = dict(cast(Mapping[str, Refresh], registered))
         executor = getattr(app.state, 'read_only_tool_executor', None)
         if callable(executor):
             trader_spy = TraderSpyProducer(provider_evidence, cast(ReadOnlyToolExecutor, executor))
+            refreshers['TraderSpy'] = trader_spy.collect
+        if refreshers:
+            provider_collector = ProviderCollector(provider_evidence, refreshers)
         watch_journal = Journal(settings.paper_database_path.with_name('signal_watch.sqlite3'))
         watch_service = WatchService(
             WatchEngine(watch_journal), PublicStructureSource(),
@@ -173,9 +182,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 max_derivatives_age_ms=settings.max_derivatives_data_age_ms),
             interval_seconds=settings.signal_watch_interval_seconds,
             external=lambda symbol: provider_evidence.observations(symbol, now_ms=now_ms()),
-            collect_external=trader_spy.collect if trader_spy is not None else None,
+            collect_external=provider_collector.collect if provider_collector is not None else None,
         )
     app.state.signal_watch_traderspy = trader_spy
+    app.state.signal_watch_collector = provider_collector
     app.state.signal_watch = watch_service
     try:
         if service is not None:
