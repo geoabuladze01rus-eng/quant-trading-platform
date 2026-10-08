@@ -26,8 +26,12 @@ class StructureSource(Protocol):
 
 
 def _spot_flow(rows: list[object], now_ms: int, max_age_ms: int) -> tuple[Observation, int]:
-    if not 2 <= len(rows) <= 3:
+    if not 1 <= len(rows) <= 3:
         raise ValueError("Insufficient bounded venue flow")
+    if len(rows) == 1 and (
+        not isinstance(rows[0], dict) or rows[0].get("venue") != "okx"
+    ):
+        raise ValueError("Single-venue flow must be OKX")
     venues: set[str] = set()
     clocks: list[int] = []
     imbalances: list[Decimal] = []
@@ -60,7 +64,7 @@ def _spot_flow(rows: list[object], now_ms: int, max_age_ms: int) -> tuple[Observ
             "D",
             sum(imbalances, Decimal(0)) / len(imbalances),
             timestamp,
-            "public_multi_venue_depth",
+            "okx_spot_depth" if len(rows) == 1 else "public_multi_venue_depth",
         ),
         timestamp + max_age_ms,
     )
@@ -221,7 +225,7 @@ class WatchService:
             spot = evidence.get("spot")
             rows = spot.get("venues") if isinstance(spot, dict) else None
             flow_deadline = None
-            if isinstance(rows, list) and len(rows) >= 2:
+            if isinstance(rows, list) and rows:
                 try:
                     flow, flow_deadline = _spot_flow(rows, now, self.max_flow_age_ms)
                     observations.append(flow)
@@ -247,7 +251,7 @@ class WatchService:
                 for observation in candidate.result.evidence
             ]
             if flow_deadline is not None and any(
-                observation.origin == "public_multi_venue_depth"
+                observation.origin in {"public_multi_venue_depth", "okx_spot_depth"}
                 for candidate in candidates
                 for observation in candidate.result.evidence
             ):
