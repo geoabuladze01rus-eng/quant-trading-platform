@@ -642,3 +642,70 @@ async def test_invalid_data_hub_flow_does_not_become_fresh_from_response_time(tm
     assert "flow_evidence_unavailable" in state["warnings"]
     assert all(c["domains"]["D"] == "0" for c in state["candidates"])
     journal.close()
+
+
+@pytest.mark.asyncio
+async def test_okx_only_depth_counts_as_one_verifiable_source_not_venue_consensus(tmp_path):
+    from quant_trading_platform.signal_watch.service import _spot_flow
+
+    observation, deadline = _spot_flow(
+        [{
+            "venue": "okx", "depth_imbalance": "0.8",
+            "timestamp_ms": NOW - 300, "received_at_ms": NOW - 200,
+        }],
+        NOW, 1000,
+    )
+    assert observation.source == "Data Hub"
+    assert observation.domain == "D"
+    assert observation.origin == "okx_spot_depth"
+    assert observation.timestamp_ms == NOW - 300
+    assert deadline == NOW + 700
+
+    for row in (
+        {"venue": "binance", "depth_imbalance": "0.8",
+         "timestamp_ms": NOW, "received_at_ms": NOW},
+        {"venue": "okx", "depth_imbalance": "0.8",
+         "timestamp_ms": NOW - 1001, "received_at_ms": NOW},
+        {"venue": "okx", "depth_imbalance": "2",
+         "timestamp_ms": NOW, "received_at_ms": NOW},
+    ):
+        with pytest.raises(ValueError):
+            _spot_flow([row], NOW, 1000)
+
+
+@pytest.mark.asyncio
+async def test_okx_only_scanner_uses_actual_depth_and_preserves_expiry(tmp_path):
+    from quant_trading_platform.signal_watch.service import WatchService
+
+    class Source:
+        def fetch(self, symbol, *, now_ms):
+            return frame(timestamp_ms=now_ms)
+
+        def close(self):
+            pass
+
+    current = NOW
+
+    def evidence(symbol, now):
+        return {
+            "quality": {"status": "healthy"},
+            "spot": {"venues": [{
+                "venue": "okx", "depth_imbalance": "0.8",
+                "timestamp_ms": now - 400, "received_at_ms": now - 300,
+            }]},
+        }
+
+    journal = Journal(tmp_path / "okx_watch.db")
+    service = WatchService(WatchEngine(journal), Source(), evidence,
+                           clock=lambda: current)
+    await service.poll_once()
+    candidate = next(c for c in service.assets["BTC/USDT"]["candidates"]
+                     if c["setup"] == "Momentum")
+    assert candidate["domains"]["D"] == "16.0"
+    assert "Data Hub" in candidate["sources"]
+    assert any(e["origin"] == "okx_spot_depth" for e in candidate["evidence"])
+    assert service.assets["BTC/USDT"]["valid_until_ms"] == NOW + 600
+    current += 601
+    assert service.snapshot()["assets"]["BTC/USDT"]["status"] == "stale"
+    assert service.snapshot()["assets"]["BTC/USDT"]["candidates"] == []
+    journal.close()
