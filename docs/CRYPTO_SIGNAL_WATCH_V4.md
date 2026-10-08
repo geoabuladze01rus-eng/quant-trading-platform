@@ -27,6 +27,11 @@ upstream I/O, accounting writes or notification delivery. Cached data older than
 seconds or from the future is hidden as stale. Existing `GET /signal-evidence/{symbol}`
 and the single-tool evidence MCP contract are unchanged.
 
+The hosted public gateway exposes the same cached diagnostics at
+`GET /api/crypto-signal-watch`. Only that exact GET path is allowed; write methods
+and refresh/delivery subpaths remain blocked. This route does not activate collection,
+execution or notifications.
+
 ## Confidence contract
 
 An observation requires source, domain, Decimal strength in [0,1], timestamp, and explicit

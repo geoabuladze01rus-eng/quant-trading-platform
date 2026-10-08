@@ -23,7 +23,7 @@ READ_PATHS = frozenset({
     '/reconciliation', '/paper/account', '/paper/balances', '/paper/orders',
     '/paper/fills', '/paper/positions', '/paper/performance', '/paper/reconciliation',
     '/paper/residual-exposure', '/paper/okx/robot', '/paper/okx/account',
-    '/paper/okx/history', '/strategies/spot-signals',
+    '/paper/okx/history', '/strategies/spot-signals', '/crypto-signal-watch',
     '/signal-evidence/BTC/USDT', '/signal-evidence/ETH/USDT', '/signal-evidence/SOL/USDT',
 })
 

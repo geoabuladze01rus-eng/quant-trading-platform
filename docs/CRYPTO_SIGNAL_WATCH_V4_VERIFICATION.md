@@ -216,3 +216,26 @@ notification sends, main changes, merges or deployment occurred.
 No API key, private account call, real order, notification send, main change, merge or
 production deployment was performed. Cached GET expiry does not write the journal or
 mutate historical candidates.
+
+## Hosted read-only route continuation — 2026-10-08 (latest totals)
+
+1. Completed: fixed the hosted gateway's missing exact GET allowlist entry for
+   `/api/crypto-signal-watch`. Verified disabled state and real cached candidates,
+   no source polling or journal writes, and blocked command methods/subpaths.
+2. Changed files: `src/quant_trading_platform/mcp/hosted.py`,
+   `tests/test_hosted_gateway.py`, and both v4 documents.
+3. TDD: both new regressions first failed with HTTP 403; the exact allowlist fix passed
+   the focused hosted/scanner suite (**33 passed**). Final `pytest -q`: **611 passed**.
+   Separate coverage suite also passed 611. Ruff, mypy (60 source files), compileall,
+   secret hygiene, frontend npm ci and npm run build passed. One existing Starlette
+   TestClient deprecation warning remains; npm reports the inherited http-proxy setting.
+4. Actual statement coverage: repository **91.43%**, signal_watch **92.37%**, hosted
+   gateway **93.65%**. These measurements supersede previous totals.
+5. Independent review found no defect in this delta. Hosted ASGI tests establish local
+   route behavior, not deployed availability or continuous external collection.
+6. Next/blockers: permanent authorized Native tool-executor binding remains absent from
+   the hosted backend; remaining provider-specific producers and deployed public REST/WS
+   acceptance remain incomplete. This fix does not resolve or claim those integrations.
+
+Only the requested feature branch is changed. Main, live execution, real orders, API keys,
+Telegram delivery and the existing notification workflow remain untouched.
