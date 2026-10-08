@@ -60,6 +60,7 @@ from quant_trading_platform.risk import RiskDecision, RiskEngine, RiskLimits
 from quant_trading_platform.safety import assert_safe_startup
 from quant_trading_platform.signal_watch.engine import WatchEngine
 from quant_trading_platform.signal_watch.journal import Journal
+from quant_trading_platform.signal_watch.providers import ProviderEvidenceCache
 from quant_trading_platform.signal_watch.service import PublicStructureSource, WatchService
 from quant_trading_platform.strategies.arbitrage import CrossVenueSpreadMonitor
 
@@ -154,6 +155,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.auto_spot = auto_spot
     watch_service = None
     watch_journal = None
+    provider_evidence = ProviderEvidenceCache()
+    app.state.signal_watch_providers = provider_evidence
     if settings.signal_watch_enabled and service is not None:
         watch_journal = Journal(settings.paper_database_path.with_name('signal_watch.sqlite3'))
         watch_service = WatchService(
@@ -164,6 +167,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 max_spot_age_ms=settings.max_market_data_age_ms,
                 max_derivatives_age_ms=settings.max_derivatives_data_age_ms),
             interval_seconds=settings.signal_watch_interval_seconds,
+            external=lambda symbol: provider_evidence.observations(symbol, now_ms=now_ms()),
         )
     app.state.signal_watch = watch_service
     try:
@@ -185,6 +189,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if watch_journal is not None:
             watch_journal.close()
         app.state.signal_watch = None
+        app.state.signal_watch_providers = None
         await auto_spot.stop()
         for collector in collectors:
             await collector.stop()
@@ -252,7 +257,10 @@ def crypto_signal_watch() -> dict[str, object]:
     watch = getattr(app.state, 'signal_watch', None)
     if watch is None:
         return {'status': 'disabled', 'assets': {}, 'paper_only': True, 'live_execution': False}
-    return cast(dict[str, object], watch.snapshot())
+    result = cast(dict[str, object], watch.snapshot())
+    providers = getattr(app.state, 'signal_watch_providers', None)
+    result['providers'] = [] if providers is None else providers.snapshot(now_ms=now_ms())
+    return result
 
 
 @app.get("/signal-evidence/{symbol:path}")

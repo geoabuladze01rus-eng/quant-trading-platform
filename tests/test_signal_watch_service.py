@@ -183,3 +183,99 @@ async def test_complete_candles_and_flow_generate_paper_candidate_without_orders
         assert momentum["confidence"] == "HIGH"
         assert momentum["paper_only"] and not momentum["live_execution"]
         assert len(journal.candidates()) == 12
+
+
+@pytest.mark.asyncio
+async def test_external_provider_failure_does_not_destroy_healthy_structure(tmp_path):
+    class Source:
+        def fetch(self, symbol, *, now_ms):
+            return frame(timestamp_ms=now_ms)
+
+        def close(self):
+            pass
+
+    def unavailable(symbol):
+        raise ValueError("provider token should not leak")
+
+    with Journal(tmp_path / "journal.sqlite") as journal:
+        service = WatchService(
+            WatchEngine(journal),
+            Source(),
+            lambda symbol, now: {},
+            external=unavailable,
+            clock=lambda: NOW,
+        )
+        await service.poll_once()
+        state = service.snapshot()["assets"]["BTC/USDT"]
+        assert state["status"] == "ok"
+        assert state["warnings"] == ["external_evidence_unavailable"]
+        assert len(state["candidates"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_service_registers_and_measures_price_markouts(tmp_path):
+    class Source:
+        def fetch(self, symbol, *, now_ms):
+            return frame(
+                timestamp_ms=now_ms, high=D("111"), close=D("110") if now_ms > NOW else D("102")
+            )
+
+        def close(self):
+            pass
+
+    clock = [NOW]
+    with Journal(tmp_path / "journal.sqlite") as journal:
+        service = WatchService(
+            WatchEngine(journal), Source(), lambda symbol, now: {}, clock=lambda: clock[0]
+        )
+        await service.poll_once()
+        clock[0] += 900_000
+        await service.poll_once()
+        assert service.outcomes.calibration()["REJECTED"]["samples"] > 0
+        state = service.snapshot()
+        assert state["outcomes"]["kind"] == "estimated_forward_markout"
+
+
+@pytest.mark.asyncio
+async def test_watch_api_exposes_cached_provider_quality_without_polling(monkeypatch):
+    from importlib import import_module
+
+    from quant_trading_platform.signal_watch.providers import ProviderEvidenceCache
+
+    api = import_module("quant_trading_platform.api.app")
+
+    class Service:
+        def snapshot(self):
+            return {"assets": {}, "paper_only": True, "live_execution": False}
+
+    cache = ProviderEvidenceCache()
+    monkeypatch.setattr(api, "now_ms", lambda: NOW)
+    monkeypatch.setattr(api.app.state, "signal_watch", Service(), raising=False)
+    monkeypatch.setattr(api.app.state, "signal_watch_providers", cache, raising=False)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=api.app), base_url="http://test"
+    ) as client:
+        result = (await client.get("/crypto-signal-watch")).json()
+    assert len(result["providers"]) == 18
+    assert all(r["status"] == "no_data" for r in result["providers"])
+
+
+@pytest.mark.asyncio
+async def test_snapshot_is_safe_in_fastapi_worker_thread(tmp_path):
+    import asyncio
+
+    class Source:
+        def fetch(self, symbol, *, now_ms):
+            return frame(timestamp_ms=now_ms)
+
+        def close(self):
+            pass
+
+    with Journal(tmp_path / "journal.sqlite") as journal:
+        service = WatchService(
+            WatchEngine(journal), Source(), lambda symbol, now: {}, clock=lambda: NOW
+        )
+        await service.poll_once()
+        state = await asyncio.to_thread(service.snapshot)
+        assert state["paper_only"] is True
+        assert state["outcomes"]["kind"] == "estimated_forward_markout"

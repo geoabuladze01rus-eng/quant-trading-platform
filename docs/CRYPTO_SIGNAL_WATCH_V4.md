@@ -112,3 +112,35 @@ Remaining work: verify live public REST/WS availability in the deployment enviro
 provide authorized provider-schema adapters; validate predictive quality with observed
 outcomes; approve and connect the new delivery interface separately. No deployment,
 notification switching, merge, live execution or private exchange keys are part of this PR.
+
+## Continuation: strict reports and automatic forward markouts
+
+`ProviderEvidenceCache` accepts independently timestamped normalized reports from the
+approved provider names. Each report has a canonicalizable symbol and up to five unique
+domain observations, each with domain, exact strength, origin and source timestamp.
+Raw JSON numeric tokens are parsed as Decimal. Python float inputs, missing provenance,
+missing/future/stale timestamps and malformed reports fail closed. Failed sources clear
+their own evidence without invalidating other providers. The cache is wired to the scanner
+through its existing external callback. GET exposes cached per-provider/asset quality.
+This is an in-process producer boundary; hosted vendor-specific transports/ingestion are
+still not connected. A real sampled CryptoAudit analysis/levels response had no source
+timestamp, so it cannot be promoted to fresh confirmation using receipt time.
+
+`OutcomeTracker` now automatically registers confirmed setup candidates (including those
+blocked by evidence/score), and observes subsequent completed-candle closes in the scanner.
+The default horizon is exactly 15 minutes. The exit candle must have exactly the due
+close timestamp, be fresh, belong to the same asset, and contain a positive Decimal price.
+Missing the exact horizon becomes `missed_horizon`, never a substituted later return.
+Pending and measured records survive restart; duplicate observations do not add samples.
+
+Per-side estimated fee is 0.1%, per-side estimated slippage is 0.05%. These disclosed defaults
+are research assumptions, not measured exchange costs. Estimated net return is
+`exit * (1-fee-slippage) / (entry * (1+fee+slippage)) - 1`.
+The kind is always `estimated_forward_markout`: no order/fill or realized execution P&L
+is implied. Estimates live only in `forward_markouts`; separately supplied observed outcomes
+remain in `signal_outcomes`. One kind cannot reserve/block the other's identity.
+The public statistics include only measured forward markouts. The scanner computes these
+statistics on SQLite's owning event-loop thread; GET reads a detached in-memory cache.
+
+External report callback failures now produce a sanitized warning while retaining healthy
+structure and candidate rejection diagnostics. No notification workflow is switched.

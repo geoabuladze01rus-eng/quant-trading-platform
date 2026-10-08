@@ -16,6 +16,7 @@ from quant_trading_platform.market_data.derivatives import SIGNAL_SYMBOLS, exact
 from quant_trading_platform.market_data.okx_candles import parse_completed_rows
 from quant_trading_platform.signal_watch.engine import Frame, WatchEngine, detect_setups
 from quant_trading_platform.signal_watch.intelligence import Observation
+from quant_trading_platform.signal_watch.outcomes import OutcomeTracker
 from quant_trading_platform.strategies.spot_momentum import DailyCandle
 
 
@@ -117,6 +118,8 @@ class WatchService:
         self.engine, self.source, self.evidence = engine, source, evidence
         self.external, self.clock, self.interval_seconds = external, clock, interval_seconds
         self.assets: dict[str, dict[str, object]] = {}
+        self.outcomes = OutcomeTracker(engine)
+        self._calibration = self.outcomes.calibration()
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -131,7 +134,14 @@ class WatchService:
             evidence = self.evidence(symbol, now)
             quality = evidence.get("quality")
             status = str(quality.get("status")) if isinstance(quality, dict) else "insufficient"
-            observations = list(self.external(symbol))
+            warnings = []
+            try:
+                observations = list(self.external(symbol))
+                if any(not isinstance(item, Observation) for item in observations):
+                    raise ValueError("Malformed external evidence")
+            except Exception:
+                observations = []
+                warnings.append("external_evidence_unavailable")
             if detect_setups(frame):
                 observations.extend(
                     Observation(
@@ -173,10 +183,17 @@ class WatchService:
                 now_ms=now,
                 market_regime="trend" if frame.trend else "range",
             )
+            self.outcomes.observe(
+                symbol, price=frame.close, timestamp_ms=frame.timestamp_ms, now_ms=now
+            )
+            for candidate in candidates:
+                self.outcomes.register(candidate, entry_price=frame.close)
+            self._calibration = self.outcomes.calibration()
             self.assets[symbol] = {
                 "status": "ok",
                 "timestamp_ms": now,
                 "candidates": [c.payload() | {"signal_id": c.signal_id} for c in candidates],
+                "warnings": warnings,
             }
         except Exception:
             self.assets[symbol] = {
@@ -195,7 +212,15 @@ class WatchService:
                 type(timestamp) is not int or not 0 <= now - timestamp <= 60_000
             ):
                 state["status"], state["candidates"] = "stale", []
-        return {"paper_only": True, "live_execution": False, "assets": assets}
+        return {
+            "paper_only": True,
+            "live_execution": False,
+            "assets": assets,
+            "outcomes": {
+                "kind": "estimated_forward_markout",
+                "calibration": copy.deepcopy(self._calibration),
+            },
+        }
 
     async def _run(self) -> None:
         while not self._stop.is_set():

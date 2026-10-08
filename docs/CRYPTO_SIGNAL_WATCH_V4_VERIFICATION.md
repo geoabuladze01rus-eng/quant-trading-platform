@@ -92,3 +92,25 @@ satisfy independent confirmation.
 - `tests/test_signal_telegram_delivery.py`
 - `tests/test_signal_watch_engine.py`
 - `tests/test_signal_watch_service.py`
+
+## Continuation verification (supersedes totals above)
+
+- New files: `signal_watch/outcomes.py`, `signal_watch/providers.py`,
+  `tests/test_signal_outcomes.py`, `tests/test_signal_provider_evidence.py`.
+- Modified: `signal_watch/service.py`, `api/app.py`, service tests, both v4 documents.
+- Actual final suite: **529 passed**, one existing Starlette warning.
+- New focused continuation tests: outcomes 8, provider reports 7, service total 13;
+  these 28 tests passed together. All 19 newly added regression cases are in the full run.
+- Final statement coverage: repository **90.85%**; signal_watch **93.60%**;
+  outcomes **92.00%**; providers **86.67%**; scanner **90.77%**.
+- Ruff, mypy (56 source files), compileall and secret hygiene passed. Frontend npm ci and
+  npm run build passed again. No live trading, notification send, merge or deployment.
+- Independent reviewer found SQLite thread misuse in GET and mixed estimated/observed
+  outcome identity. Each was reproduced with a failing regression, fixed, and verified
+  by targeted and full green suites. GET now uses cached statistics; kinds use separate tables.
+- Actual CryptoAudit technical-analysis and support/resistance tools were called. Both
+  responded, but neither supplied an upstream source timestamp. The report boundary
+  rejects this as confirmation; no collection-time freshness was invented.
+- Vendor-specific hosted transports and scheduled producer ingestion remain unconnected;
+  the normalized in-process boundary is now implemented and wired. Live exchange network
+  and exact-horizon capture in deployment remain unverified. No claim of realized profit.
