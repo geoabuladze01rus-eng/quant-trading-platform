@@ -78,7 +78,18 @@ def _collection_clocks(
     warnings: list[str] = []
     streams: dict[str, int] = {}
     streams_valid = len(snapshots) == len(SIGNAL_SYMBOLS)
+    expected_venues: set[str] | None = None
     for symbol, snapshot in snapshots.items():
+        quality = snapshot.get("quality")
+        count = quality.get("expected_sources") if isinstance(quality, dict) else None
+        scoped_venues = (
+            {"okx"} if count == 2
+            else {"binance", "bybit", "okx"} if count == 6 else set()
+        )
+        if expected_venues is None:
+            expected_venues = scoped_venues
+        if not scoped_venues or scoped_venues != expected_venues:
+            streams_valid = False
         if not _evidence_fresh(snapshot, now):
             streams_valid = False
             continue
@@ -88,10 +99,10 @@ def _collection_clocks(
             for row in data['venues']:
                 clocks[f'{section}:{row["venue"]}:{symbol}'] = row['timestamp_ms']
         rows = snapshot.get('liquidation_sources')
-        if (not isinstance(rows, list) or len(rows) != 3
+        if (not isinstance(rows, list) or len(rows) != len(scoped_venues)
             or any(not isinstance(row, dict) or not isinstance(row.get('venue'), str)
                    for row in rows)
-            or {row.get('venue') for row in rows} != {'binance', 'bybit', 'okx'}):
+            or {row.get('venue') for row in rows} != scoped_venues):
             streams_valid = False
             continue
         for row in rows:
@@ -195,9 +206,13 @@ async def check_readiness(
     ready = (ready and engine_available and not missing
              and all(q == 'healthy' for q in qualities.values()))
     collection_clocks, collection_warnings = _collection_clocks(snapshots, watch, finished_at)
+    core_data_ready = engine_available and all(
+        q == 'healthy' for q in qualities.values()
+    )
     return {
         'scope': 'read_only_snapshot_acceptance', 'status': 'ready' if ready else 'incomplete',
         'engine_available': engine_available, 'paper_live_lock_verified': locked,
+        'core_data_ready': core_data_ready,
         'missing_providers': sorted(missing), 'evidence_quality': qualities,
         'warnings': warnings, 'continuous_collection_verified': False,
         'collection_clocks': collection_clocks, 'collection_warnings': collection_warnings,
