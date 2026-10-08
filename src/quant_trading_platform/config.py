@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     public_market_data_enabled: bool = True
     signal_watch_enabled: bool = True
     signal_watch_interval_seconds: int = Field(default=30, ge=15, le=300)
+    crypto_market_venues: str = "binance,bybit,okx"
     market_data_symbol: str = "BTC/USDT"
     market_data_symbols: str = "BTC/USDT,ETH/USDT,LTC/USDT,SOL/USDT"
     market_data_poll_interval_seconds: float = Field(default=1.0, ge=0.25, le=60)
