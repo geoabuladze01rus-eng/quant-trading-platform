@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, harden/mvp-safety, 'feature/**', 'fix/**']
+    branches: [main, harden/mvp-safety, 'feature/**', 'feat/**', 'fix/**']
 
 jobs:
   backend:
@@ -41,6 +41,8 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
+      - name: Read-only signal dashboard tests
+        run: npm test
   docker-smoke:
     runs-on: ubuntu-latest
     steps:

@@ -32,6 +32,47 @@ The hosted public gateway exposes the same cached diagnostics at
 and refresh/delivery subpaths remain blocked. This route does not activate collection,
 execution or notifications.
 
+## Read-only v4 dashboard and cached research history
+
+The dashboard includes a separate v4 panel for BTC/ETH/SOL, A–E contributions, confidence,
+rejection reasons and provider availability. No execution or delivery control is introduced.
+With no backend URL, this panel reports `not_connected` rather than fabricating signals.
+It uses the existing dashboard API base, including `/api` in the hosted image.
+
+Watch snapshots include `generated_at_ms`, a bounded `journal` of the last 100 inserted
+candidate records with stable `signal_id` and `missed_reason`, and `observed_outcomes`.
+Journal and calibration snapshots are refreshed by the scanner, including at startup;
+GET performs no SQLite reads. Expired current candidates disappear while clearly labelled
+historical records remain available. Durable storage retains the complete journal.
+
+`outcomes` is estimated exact-horizon forward markout; `observed_outcomes` is separately
+recorded net return. They retain separate samples, identities and calibration. Missing
+observations are not counted as wins, and markouts do not become executed-order P&L.
+
+The browser validates paper/live locks, asset identity, response bounds and Decimal text.
+Financial values stay strings: the UI does not recompute scores or returns with floats.
+Receipt wallclock must place server generation within the preceding five seconds; future
+generation is rejected. This fail-closed policy requires synchronized browser/server clocks.
+Receipt age consumes the original source deadline; subsequent expiry uses monotonic elapsed
+time. Provider health also expires at its original deadline. Failed responses remove current
+data. The request uses credential-free uncached GET, rejects redirects and limits the body
+to 1 MiB. Frontend behavior tests run with `npm test` and are included in CI.
+
+## Direct-backend snapshot acceptance
+
+Run `python scripts/check_signal_watch_readiness.py --origin https://BACKEND_HOST` against
+the **direct backend root**, or omit origin for loopback HTTP. It is not a probe for the
+hosted `/api` prefix or the separate Railway function gateway. Only five public GETs are
+issued: health, watch, and evidence for three assets. No credentials or command are sent.
+
+The probe validates evidence through the existing MCP adapter and rechecks all source,
+provider and candidate deadlines at completion. `ready` means only this read-only snapshot
+acceptance passed: paper/live lock, fresh scanner assets, all named external providers for
+three assets and healthy validated core evidence. It does not require a HIGH candidate.
+Missing or stale inputs yield exit code 1 and `incomplete`. Every report explicitly sets
+`continuous_collection_verified=false`; sustained REST/WS, Native execution and delivery
+acceptance remain separate.
+
 ## Confidence contract
 
 An observation requires source, domain, Decimal strength in [0,1], timestamp, and explicit

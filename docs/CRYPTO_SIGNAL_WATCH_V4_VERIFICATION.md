@@ -239,3 +239,64 @@ mutate historical candidates.
 
 Only the requested feature branch is changed. Main, live execution, real orders, API keys,
 Telegram delivery and the existing notification workflow remain untouched.
+
+## Large dashboard / diagnostics / acceptance block — 2026-10-08 (latest totals)
+
+1. Completed: cached bounded candidate history with ANTI MISS reasons and stable IDs;
+   restart restoration and separate observed/estimated calibration; provider source
+   deadlines; v4 dashboard with paper locks, Decimal strings, unavailable/stale states
+   and read-only transport; direct-backend snapshot acceptance CLI; frontend tests in
+   CI and push coverage for the requested `feat/**` branch family.
+2. Changed files (21):
+
+   ```text
+   .github/workflows/ci.yml
+   docs/CRYPTO_SIGNAL_WATCH_V4.md
+   docs/CRYPTO_SIGNAL_WATCH_V4_VERIFICATION.md
+   frontend/package.json
+   frontend/src/App.tsx
+   frontend/src/SignalWatchPanel.tsx
+   frontend/src/signalWatch.ts
+   frontend/src/styles.css
+   frontend/tests/fixtures.mjs
+   frontend/tests/loader.mjs
+   frontend/tests/register.mjs
+   frontend/tests/signalWatch.test.mjs
+   frontend/tests/signalWatchPanel.test.mjs
+   scripts/check_signal_watch_readiness.py
+   src/quant_trading_platform/signal_watch/engine.py
+   src/quant_trading_platform/signal_watch/providers.py
+   src/quant_trading_platform/signal_watch/readiness.py
+   src/quant_trading_platform/signal_watch/service.py
+   tests/test_signal_watch_diagnostics.py
+   tests/test_signal_watch_pipeline.py
+   tests/test_signal_watch_readiness.py
+   ```
+
+3. TDD: missing history/cache/provider deadlines/readiness/UI interfaces reproduced
+   before implementation; actual expiry-after-probe and oversize-body failures reproduced
+   before fixes. Independent review found two important freshness defects: a self-consistent
+   stale response could replay as fresh in the browser, and earlier evidence could expire
+   during sequential readiness requests. Both were reproduced by failing regressions,
+   then fixed in one pass. Final `pytest -q`: **627 passed**, one existing Starlette warning;
+   separate coverage run also passed 627. Frontend `npm test`: **11 passed**.
+   Ruff, mypy (61 source files), compileall, staged-file secret hygiene, npm ci and build
+   passed. npm's inherited http-proxy warning remains. Local runtime: Python 3.12 / Node 24;
+   the configured CI Python 3.11 / Node 22 runs are not claimed as locally executed.
+4. Actual statement coverage: repository **91.49%**, signal_watch **92.55%**,
+   engine **97.53%**, scanner **92.77%**, readiness **92.45%**. Frontend coverage was not
+   measured; the 11 tests exercise the transport/model and real server-rendered view.
+5. Controlled end-to-end fixtures exercised all normalized external provider boundaries:
+   VERY HIGH 100, isolated Gina failure → HIGH 80, Exa failure → rejected 65 / ANTI MISS;
+   exact 15m estimated markout and distinct observed samples. This proves local behavior,
+   not deployed vendor connectivity, profitability or notification delivery.
+   Actual Railway read-only inventory shows `signal-data-hub` and `crypto-signal-mcp`
+   sourced from `main`, not the v4 feature branch. No infrastructure setting was changed.
+   The actual external CLI attempt returned `incomplete` / unavailable for all endpoints
+   from this environment; it does not establish deployment feed health. Docker is absent
+   (`docker: command not found`), so Docker smoke remains unverified.
+6. Next/blockers: publish and verify an isolated feature-branch hosted runtime; establish
+   a permanent authorized Native executor; complete and validate remaining provider
+   producers with actual upstream timestamps, sustained REST/WS and exact-horizon data.
+   The code is not declared fully operational in production. No notification logic switch,
+   API key, private account call, real order, merge or main modification occurred.

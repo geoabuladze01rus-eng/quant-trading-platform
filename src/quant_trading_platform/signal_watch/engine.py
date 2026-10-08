@@ -7,6 +7,7 @@ Calibration reports observations only and does not tune production thresholds.
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
+from typing import cast
 
 from quant_trading_platform.signal_watch.intelligence import Observation, evaluate
 from quant_trading_platform.signal_watch.journal import SETUPS, Candidate, Journal
@@ -149,6 +150,20 @@ class WatchEngine:
             {"signal_id": row[0], "reason": row[1]}
             for row in self.journal.connection.execute(
                 "SELECT signal_id, reason FROM missed_opportunities ORDER BY rowid"
+            )
+        ]
+
+    def recent_diagnostics(self) -> list[dict[str, object]]:
+        """Bounded historical candidates with ANTI MISS reasons, newest insertion first."""
+        import json
+
+        return [
+            cast(dict[str, object], json.loads(payload))
+            | {'signal_id': signal_id, 'missed_reason': missed_reason}
+            for signal_id, payload, missed_reason in self.journal.connection.execute(
+                'SELECT candidates.signal_id, candidates.payload, missed_opportunities.reason '
+                'FROM candidates LEFT JOIN missed_opportunities USING(signal_id) '
+                'ORDER BY candidates.rowid DESC LIMIT 100'
             )
         ]
 

@@ -167,12 +167,16 @@ class WatchService:
         self.assets: dict[str, dict[str, object]] = {}
         self.outcomes = OutcomeTracker(engine)
         self._calibration = self.outcomes.calibration()
+        self._observed_calibration = engine.calibration()
+        self._diagnostics = engine.recent_diagnostics()
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
     async def poll_once(self) -> None:
         # Slow/failed assets have independent tasks; GET never calls this method.
         await asyncio.gather(*(self._poll_asset(symbol) for symbol in SIGNAL_SYMBOLS))
+        self._diagnostics = self.engine.recent_diagnostics()
+        self._observed_calibration = self.engine.calibration()
 
     async def _poll_asset(self, symbol: str) -> None:
         try:
@@ -277,9 +281,19 @@ class WatchService:
             ):
                 state["status"], state["candidates"] = "stale", []
         return {
+            "generated_at_ms": now,
             "paper_only": True,
             "live_execution": False,
             "assets": assets,
+            "journal": {
+                "kind": "historical_candidates",
+                "limit": 100,
+                "rows": copy.deepcopy(self._diagnostics),
+            },
+            "observed_outcomes": {
+                "kind": "observed_net_return",
+                "calibration": copy.deepcopy(self._observed_calibration),
+            },
             "outcomes": {
                 "kind": "estimated_forward_markout",
                 "calibration": copy.deepcopy(self._calibration),

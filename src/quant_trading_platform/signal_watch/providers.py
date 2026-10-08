@@ -113,6 +113,15 @@ class ProviderEvidenceCache:
                     "source": source,
                     "symbol": symbol,
                     "status": self.status(source, symbol, now_ms=now_ms),
+                    "timestamp_ms": min(
+                        (o.timestamp_ms for o in self._values.get((source, symbol), ())),
+                        default=None,
+                    ),
+                    "valid_until_ms": min(
+                        (o.timestamp_ms + observation_max_age_ms(o)
+                         for o in self._values.get((source, symbol), ())),
+                        default=None,
+                    ),
                 }
                 for source in sorted(PROVIDERS - {"Market Structure", "Data Hub"})
                 for symbol in SIGNAL_SYMBOLS
