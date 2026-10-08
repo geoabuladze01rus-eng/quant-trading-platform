@@ -163,7 +163,10 @@ async def test_okx_only_mode_does_not_count_missing_exchanges_as_failures():
     assert result["quality"]["fresh_sources"] == 2
     assert result["quality"]["missing"] == []
     assert result["quality"]["stale"] == []
-    assert "Single OKX venue: no independent cross-venue corroboration" in result["quality"]["warnings"]
+    assert (
+        "Single OKX venue: no independent cross-venue corroboration"
+        in result["quality"]["warnings"]
+    )
     assert [row["venue"] for row in result["spot"]["venues"]] == ["okx"]
     assert [row["venue"] for row in result["derivatives"]["venues"]] == ["okx"]
     assert result["spot"]["cross_venue_spread"] is None
