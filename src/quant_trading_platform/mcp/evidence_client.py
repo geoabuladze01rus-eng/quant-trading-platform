@@ -165,7 +165,11 @@ def _validate(value: object, symbol: str, now_ms: int) -> dict[str, object]:
     ):
         raise ValueError("Invalid evidence quality")
     expected_count = quality.get("expected_sources")
-    if expected_count not in (2, 6) or type(expected_count) is not int or type(quality.get("fresh_sources")) is not int:
+    if (
+        expected_count not in (2, 6)
+        or type(expected_count) is not int
+        or type(quality.get("fresh_sources")) is not int
+    ):
         raise ValueError("Invalid evidence counts")
     # Two-source packets are permitted only for the explicit OKX-only market scope.
     expected_venues = {"okx"} if expected_count == 2 else {"binance", "bybit", "okx"}
@@ -262,7 +266,9 @@ def _validate(value: object, symbol: str, now_ms: int) -> dict[str, object]:
     if labels != expected_labels - fresh_labels:
         raise ValueError("Inconsistent missing/stale evidence")
     minimum = 1 if expected_count == 2 else 2
-    expected_status = "insufficient" if min(counts) < minimum else "degraded" if labels else "healthy"
+    expected_status = (
+        "insufficient" if min(counts) < minimum else "degraded" if labels else "healthy"
+    )
     if quality["status"] != expected_status:
         raise ValueError("Untrusted deterministic quality")
     liquidations = value.get("liquidations")
