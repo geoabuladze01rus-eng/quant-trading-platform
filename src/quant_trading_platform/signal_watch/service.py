@@ -12,6 +12,7 @@ from typing import Protocol
 
 import httpx
 
+from quant_trading_platform.execution_engine import ExecutionEngine
 from quant_trading_platform.market_data.derivatives import SIGNAL_SYMBOLS, exact_decimal
 from quant_trading_platform.market_data.okx_candles import parse_completed_rows
 from quant_trading_platform.signal_watch.engine import Frame, WatchEngine, detect_setups
@@ -29,9 +30,7 @@ class StructureSource(Protocol):
 def _spot_flow(rows: list[object], now_ms: int, max_age_ms: int) -> tuple[Observation, int]:
     if not 1 <= len(rows) <= 3:
         raise ValueError("Insufficient bounded venue flow")
-    if len(rows) == 1 and (
-        not isinstance(rows[0], dict) or rows[0].get("venue") != "okx"
-    ):
+    if len(rows) == 1 and (not isinstance(rows[0], dict) or rows[0].get("venue") != "okx"):
         raise ValueError("Single-venue flow must be OKX")
     venues: set[str] = set()
     clocks: list[int] = []
@@ -139,6 +138,18 @@ class PublicStructureSource:
                 current.close / candles[-6].close - 1,
                 previous.high,
                 previous.low,
+                sum(
+                    (
+                        max(
+                            candles[i].high - candles[i].low,
+                            abs(candles[i].high - candles[i - 1].close),
+                            abs(candles[i].low - candles[i - 1].close),
+                        )
+                        for i in range(len(candles) - 14, len(candles))
+                    ),
+                    Decimal(0),
+                )
+                / 14,
             )
         except Exception:
             raise ValueError("Public structure unavailable") from None
@@ -161,6 +172,7 @@ class WatchService:
         interval_seconds: int = 30,
         max_flow_age_ms: int = 1_000,
         notifications: NotificationRouter | None = None,
+        execution: ExecutionEngine | None = None,
     ) -> None:
         if interval_seconds < 15:
             raise ValueError("Unsafe structure polling interval")
@@ -171,6 +183,9 @@ class WatchService:
         self.external, self.clock, self.interval_seconds = external, clock, interval_seconds
         self.collect_external = collect_external
         self.notifications = notifications
+        self.execution = execution
+        self._bot_control: list[dict[str, object]] = []
+        self._delivery_task: asyncio.Task[None] | None = None
         self._deliveries: list[dict[str, object]] = []
         self.assets: dict[str, dict[str, object]] = {}
         self.outcomes = OutcomeTracker(engine)
@@ -260,7 +275,13 @@ class WatchService:
                 for observation in candidate.result.evidence
             ):
                 deadlines.append(flow_deadline)
-            if self.notifications is not None:
+            if self.execution is not None:
+                for candidate in candidates:
+                    self.execution.consume_candidate(
+                        candidate, frame, valid_until_ms=min(deadlines), healthy=status == "healthy"
+                    )
+                self._bot_control = self.execution.snapshot()
+            elif self.notifications is not None:
                 for candidate in candidates:
                     await self.notifications.deliver(
                         candidate, valid_until_ms=min(deadlines), data_blocked=status != "healthy"
@@ -310,6 +331,7 @@ class WatchService:
             "paper_only": True,
             "live_execution": False,
             "notifications": copy.deepcopy(self._deliveries),
+            "bot_control": copy.deepcopy(self._bot_control),
             "assets": assets,
             "journal": {
                 "kind": "historical_candidates",
@@ -336,9 +358,26 @@ class WatchService:
         if self._task is None:
             self._stop.clear()
             self._task = asyncio.create_task(self._run(), name="crypto-signal-watch-v4")
+            if self.execution is not None:
+                self._delivery_task = asyncio.create_task(self._deliver_actions())
+
+    async def _deliver_actions(self) -> None:
+        while not self._stop.is_set():
+            if self.execution is not None:
+                await self.execution.deliver_pending()
+                self._bot_control = self.execution.snapshot()
+                if self.notifications is not None:
+                    self._deliveries = self.notifications.snapshot()
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), timeout=1)
 
     async def stop(self) -> None:
         self._stop.set()
+        if self._delivery_task is not None:
+            self._delivery_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._delivery_task
+            self._delivery_task = None
         if self._task is not None:
             await self._task
             self._task = None

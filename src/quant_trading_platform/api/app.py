@@ -22,6 +22,7 @@ from quant_trading_platform.connectors.crypto.derivatives import (
     BybitDerivativesSource,
     OKXDerivativesSource,
 )
+from quant_trading_platform.execution_engine import ExecutionEngine
 from quant_trading_platform.explainability import explain_opportunity, explain_paper_execution
 from quant_trading_platform.explainability.reasons import human_reason
 from quant_trading_platform.market_data.derivatives import (
@@ -45,6 +46,7 @@ from quant_trading_platform.models import (
     Venue,
     normalize_symbol,
 )
+from quant_trading_platform.okx_controller import BotManager
 from quant_trading_platform.paper_trading import PaperExecutionEngine
 from quant_trading_platform.paper_trading.auto_spot import AutomaticSpotPaper
 from quant_trading_platform.paper_trading.models import PaperCommandError
@@ -87,8 +89,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise ValueError("OKX spot paper account must be separate from spread account")
     paper_store = SQLitePaperStore(settings.paper_database_path)
     spread_seed = {
-        "USDT": settings.paper_initial_usdt, "BTC": settings.paper_initial_btc,
-        "ETH": settings.paper_initial_eth, "LTC": settings.paper_initial_ltc,
+        "USDT": settings.paper_initial_usdt,
+        "BTC": settings.paper_initial_btc,
+        "ETH": settings.paper_initial_eth,
+        "LTC": settings.paper_initial_ltc,
     }
     existing = paper_store.get_account(settings.paper_account_id)
     if existing is not None:
@@ -106,8 +110,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.paper_service = PersistentPaperService(paper_store)
     spot_account = paper_store.seed_account(
         settings.okx_spot_paper_account_id,
-        {"USDT": settings.okx_spot_paper_initial_usdt,
-         "BTC": Decimal(0), "ETH": Decimal(0), "LTC": Decimal(0)},
+        {
+            "USDT": settings.okx_spot_paper_initial_usdt,
+            "BTC": Decimal(0),
+            "ETH": Decimal(0),
+            "LTC": Decimal(0),
+        },
     )
     if spot_account.get("account_kind") not in (None, "okx_spot"):
         raise ValueError("OKX spot account has an incompatible kind")
@@ -115,9 +123,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.okx_spot_paper_account_id
     ):
         raise ValueError("Existing paper orders cannot be relabelled as OKX spot")
-    paper_store.upsert_account(
-        settings.okx_spot_paper_account_id, {"account_kind": "okx_spot"}
-    )
+    paper_store.upsert_account(settings.okx_spot_paper_account_id, {"account_kind": "okx_spot"})
     app.state.okx_spot_service = OKXSpotPaperService(paper_store)
     app.state.persistent_audit = PersistentAuditLog(paper_store)
     # A durable paper account must pass accounting reconciliation before new commands.
@@ -129,39 +135,57 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     service = None
     if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
         service = MultiMarketDataService(
-            [MarketDataService(
-                [source for source in (
-                    BinanceConnector(settings) if Venue.BINANCE in enabled_venues else None,
-                    BybitConnector(settings) if Venue.BYBIT in enabled_venues else None,
-                    OKXConnector(settings) if Venue.OKX in enabled_venues else None,
-                ) if source is not None],
-                _QUOTE_CACHE,
-                symbol=symbol,
-                interval_seconds=settings.market_data_poll_interval_seconds,
-                max_age_ms=settings.max_market_data_age_ms,
-                on_update=record_detected_opportunities,
-            ) for symbol in configured_market_symbols()]
+            [
+                MarketDataService(
+                    [
+                        source
+                        for source in (
+                            BinanceConnector(settings) if Venue.BINANCE in enabled_venues else None,
+                            BybitConnector(settings) if Venue.BYBIT in enabled_venues else None,
+                            OKXConnector(settings) if Venue.OKX in enabled_venues else None,
+                        )
+                        if source is not None
+                    ],
+                    _QUOTE_CACHE,
+                    symbol=symbol,
+                    interval_seconds=settings.market_data_poll_interval_seconds,
+                    max_age_ms=settings.max_market_data_age_ms,
+                    on_update=record_detected_opportunities,
+                )
+                for symbol in configured_market_symbols()
+            ]
         )
     app.state.market_data = service
     derivatives_service = None
     liquidation_window = LiquidationWindow()
     collectors: list[PublicLiquidationCollector] = []
-    if settings.derivatives_data_enabled and settings.public_market_data_enabled and (
-        settings.market_scope != MarketScope.RUSSIAN_STOCKS
+    if (
+        settings.derivatives_data_enabled
+        and settings.public_market_data_enabled
+        and (settings.market_scope != MarketScope.RUSSIAN_STOCKS)
     ):
-        derivatives_service = MultiDerivativesEvidenceService([
-            DerivativesEvidenceService(
-                [source for source in (
-                    BinanceDerivativesSource() if Venue.BINANCE in enabled_venues else None,
-                    BybitDerivativesSource() if Venue.BYBIT in enabled_venues else None,
-                    OKXDerivativesSource() if Venue.OKX in enabled_venues else None,
-                ) if source is not None],
-                symbol=symbol, interval_seconds=settings.derivatives_poll_interval_seconds,
-                max_age_ms=settings.max_derivatives_data_age_ms,
-            ) for symbol in SIGNAL_SYMBOLS
-        ])
-        collectors = [PublicLiquidationCollector(venue, liquidation_window)
-                      for venue in enabled_venues]
+        derivatives_service = MultiDerivativesEvidenceService(
+            [
+                DerivativesEvidenceService(
+                    [
+                        source
+                        for source in (
+                            BinanceDerivativesSource() if Venue.BINANCE in enabled_venues else None,
+                            BybitDerivativesSource() if Venue.BYBIT in enabled_venues else None,
+                            OKXDerivativesSource() if Venue.OKX in enabled_venues else None,
+                        )
+                        if source is not None
+                    ],
+                    symbol=symbol,
+                    interval_seconds=settings.derivatives_poll_interval_seconds,
+                    max_age_ms=settings.max_derivatives_data_age_ms,
+                )
+                for symbol in SIGNAL_SYMBOLS
+            ]
+        )
+        collectors = [
+            PublicLiquidationCollector(venue, liquidation_window) for venue in enabled_venues
+        ]
     app.state.derivatives = derivatives_service
     app.state.liquidations = liquidation_window
     app.state.liquidation_collectors = collectors
@@ -179,47 +203,60 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     gina_book = None
     provider_collector = None
     if settings.signal_watch_enabled and service is not None:
-        registered = getattr(app.state, 'signal_watch_external_refreshers', {})
+        registered = getattr(app.state, "signal_watch_external_refreshers", {})
         if not isinstance(registered, Mapping):
-            raise ValueError('Invalid Native provider registration')
+            raise ValueError("Invalid Native provider registration")
         refreshers = dict(cast(Mapping[str, Refresh], registered))
-        executor = getattr(app.state, 'read_only_tool_executor', None)
+        executor = getattr(app.state, "read_only_tool_executor", None)
         if callable(executor):
             trader_spy = TraderSpyProducer(provider_evidence, cast(ReadOnlyToolExecutor, executor))
-            refreshers['TraderSpy'] = trader_spy.collect
-            if 'Gina' not in refreshers:
+            refreshers["TraderSpy"] = trader_spy.collect
+            if "Gina" not in refreshers:
                 gina_book = GinaOrderBookProducer(
-                    provider_evidence, cast(ReadOnlyToolExecutor, executor))
-                refreshers['Gina'] = gina_book.collect
+                    provider_evidence, cast(ReadOnlyToolExecutor, executor)
+                )
+                refreshers["Gina"] = gina_book.collect
         if refreshers:
             provider_collector = ProviderCollector(provider_evidence, refreshers)
-        watch_journal = Journal(settings.paper_database_path.with_name('signal_watch.sqlite3'))
-        channels = getattr(app.state, 'notification_channels', {})
+        watch_journal = Journal(settings.paper_database_path.with_name("signal_watch.sqlite3"))
+        channels = getattr(app.state, "notification_channels", {})
         if not isinstance(channels, Mapping):
-            raise ValueError('Invalid Native notification channels')
+            raise ValueError("Invalid Native notification channels")
         channels = dict(cast(Mapping[str, Channel], channels))
-        notification_executor = getattr(app.state, 'composio_notification_executor', None)
+        notification_executor = getattr(app.state, "composio_notification_executor", None)
         if notification_executor is not None:
             notification_executor = cast(ComposioExecutor, notification_executor)
-            channels['telegram'] = ComposioTelegram(notification_executor)
-            channels['email'] = ComposioEmail(notification_executor)
-        if 'telegram' in channels and not isinstance(channels['telegram'], ComposioTelegram):
-            raise ValueError('Telegram requires the fixed-recipient Composio adapter')
+            channels["telegram"] = ComposioTelegram(notification_executor)
+            channels["email"] = ComposioEmail(notification_executor)
+        if "telegram" in channels and not isinstance(channels["telegram"], ComposioTelegram):
+            raise ValueError("Telegram requires the fixed-recipient Composio adapter")
         router = NotificationRouter(watch_journal, channels)
         app.state.notification_router = router
+        control = None
+        if settings.trading_mode == TradingMode.PAPER and not settings.live_trading_enabled:
+            manager = BotManager(watch_journal.connection, settings.bot_registry_path)
+            control = ExecutionEngine(manager, router)
+            app.state.paper_bot_manager = manager
+        app.state.paper_bot_execution = control
         watch_service = WatchService(
-            WatchEngine(watch_journal), PublicStructureSource(),
+            WatchEngine(watch_journal),
+            PublicStructureSource(),
             lambda symbol, timestamp: get_signal_evidence(
-                symbol, spot=service, derivatives=derivatives_service,
-                liquidations=liquidation_window, generated_at_ms=timestamp,
+                symbol,
+                spot=service,
+                derivatives=derivatives_service,
+                liquidations=liquidation_window,
+                generated_at_ms=timestamp,
                 max_spot_age_ms=settings.max_market_data_age_ms,
                 max_derivatives_age_ms=settings.max_derivatives_data_age_ms,
-                venues=enabled_venues),
+                venues=enabled_venues,
+            ),
             interval_seconds=settings.signal_watch_interval_seconds,
             max_flow_age_ms=settings.max_market_data_age_ms,
             external=lambda symbol: provider_evidence.observations(symbol, now_ms=now_ms()),
             collect_external=provider_collector.collect if provider_collector is not None else None,
             notifications=router,
+            execution=control,
         )
     app.state.signal_watch_traderspy = trader_spy
     app.state.signal_watch_gina = gina_book
@@ -317,12 +354,12 @@ def health() -> dict[str, str]:
 
 @app.get("/crypto-signal-watch")
 def crypto_signal_watch() -> dict[str, object]:
-    watch = getattr(app.state, 'signal_watch', None)
+    watch = getattr(app.state, "signal_watch", None)
     if watch is None:
-        return {'status': 'disabled', 'assets': {}, 'paper_only': True, 'live_execution': False}
+        return {"status": "disabled", "assets": {}, "paper_only": True, "live_execution": False}
     result = cast(dict[str, object], watch.snapshot())
-    providers = getattr(app.state, 'signal_watch_providers', None)
-    result['providers'] = [] if providers is None else providers.snapshot(now_ms=now_ms())
+    providers = getattr(app.state, "signal_watch_providers", None)
+    result["providers"] = [] if providers is None else providers.snapshot(now_ms=now_ms())
     return result
 
 
@@ -330,9 +367,11 @@ def crypto_signal_watch() -> dict[str, object]:
 def signal_evidence(symbol: str) -> dict[str, object]:
     try:
         result = get_signal_evidence(
-            symbol, spot=getattr(app.state, "market_data", None),
+            symbol,
+            spot=getattr(app.state, "market_data", None),
             derivatives=getattr(app.state, "derivatives", None),
-            liquidations=getattr(app.state, "liquidations", None), generated_at_ms=now_ms(),
+            liquidations=getattr(app.state, "liquidations", None),
+            generated_at_ms=now_ms(),
             max_spot_age_ms=settings.max_market_data_age_ms,
             max_derivatives_age_ms=settings.max_derivatives_data_age_ms,
             venues=configured_crypto_venues(),
@@ -340,8 +379,12 @@ def signal_evidence(symbol: str) -> dict[str, object]:
     except ValueError:
         raise HTTPException(status_code=422, detail="Unsupported signal evidence symbol") from None
     result["liquidation_sources"] = [
-        {"venue": collector.venue.value, "status": collector.status, "error": collector.error,
-         "last_received_at_ms": collector.last_received_at_ms}
+        {
+            "venue": collector.venue.value,
+            "status": collector.status,
+            "error": collector.error,
+            "last_received_at_ms": collector.last_received_at_ms,
+        }
         for collector in getattr(app.state, "liquidation_collectors", [])
     ]
     return result
@@ -370,27 +413,50 @@ def venues() -> list[dict[str, object]]:
         not settings.public_market_data_enabled
         or settings.market_scope == MarketScope.RUSSIAN_STOCKS
     )
-    crypto: list[dict[str, object]] = service.snapshot() if service is not None else [
-        {
-            "name": venue, "market": "crypto", "status": "disabled" if disabled else "no_data",
-            "mode": "disabled" if disabled else "public_read_only", "live_execution": False,
-            "symbol": settings.market_data_symbol, "data_age_ms": None, "error": None,
-            "bid": None, "ask": None, "timestamp_source": None,
-            "depth_status": "unavailable", "bid_levels": 0, "ask_levels": 0,
-        } for venue in (v.value for v in configured_crypto_venues())
-    ]
+    crypto: list[dict[str, object]] = (
+        service.snapshot()
+        if service is not None
+        else [
+            {
+                "name": venue,
+                "market": "crypto",
+                "status": "disabled" if disabled else "no_data",
+                "mode": "disabled" if disabled else "public_read_only",
+                "live_execution": False,
+                "symbol": settings.market_data_symbol,
+                "data_age_ms": None,
+                "error": None,
+                "bid": None,
+                "ask": None,
+                "timestamp_source": None,
+                "depth_status": "unavailable",
+                "bid_levels": 0,
+                "ask_levels": 0,
+            }
+            for venue in (v.value for v in configured_crypto_venues())
+        ]
+    )
     if settings.market_scope == MarketScope.CRYPTO:
         return crypto
-    return [*crypto, {
+    return [
+        *crypto,
+        {
             "name": "t_invest",
             "market": "russian_stocks",
             "status": "no_data",
             "mode": "sandbox",
             "live_execution": False,
-            "symbol": "", "data_age_ms": None, "error": None,
-            "bid": None, "ask": None, "timestamp_source": None,
-            "depth_status": "unavailable", "bid_levels": 0, "ask_levels": 0,
-        }]
+            "symbol": "",
+            "data_age_ms": None,
+            "error": None,
+            "bid": None,
+            "ask": None,
+            "timestamp_source": None,
+            "depth_status": "unavailable",
+            "bid_levels": 0,
+            "ask_levels": 0,
+        },
+    ]
 
 
 @app.get("/strategies/spot-signals")
@@ -398,8 +464,13 @@ def spot_signals() -> dict[str, object]:
     """Read-only cached candidates; never fetch or send orders in a GET request."""
     service: SpotSignalService | None = getattr(app.state, "spot_signals", None)
     if service is None:
-        return {"status": "disabled", "paper_only": True, "live_execution": False,
-                "signals": [], "reason": "Публичные данные OKX отключены."}
+        return {
+            "status": "disabled",
+            "paper_only": True,
+            "live_execution": False,
+            "signals": [],
+            "reason": "Публичные данные OKX отключены.",
+        }
     return service.snapshot()
 
 
@@ -410,15 +481,16 @@ def opportunities(explain: bool = False) -> dict[str, object]:
     timestamp = now_ms()
     quotes = tuple(_QUOTE_CACHE.values())
     detector = CrossVenueSpreadMonitor()
-    engine = RiskEngine(RiskLimits(
-        max_daily_loss_pct=Decimal(str(settings.max_daily_loss_pct)),
-        max_trade_notional_usd=Decimal(str(settings.max_trade_notional_usd)),
-        min_expected_net_pct=Decimal(str(settings.min_expected_net_pct)),
-    ))
+    engine = RiskEngine(
+        RiskLimits(
+            max_daily_loss_pct=Decimal(str(settings.max_daily_loss_pct)),
+            max_trade_notional_usd=Decimal(str(settings.max_trade_notional_usd)),
+            min_expected_net_pct=Decimal(str(settings.min_expected_net_pct)),
+        )
+    )
     for buy in quotes:
         if (
-            settings.market_scope == MarketScope.CRYPTO
-            and buy.market_type != MarketType.CRYPTO
+            settings.market_scope == MarketScope.CRYPTO and buy.market_type != MarketType.CRYPTO
         ) or (
             settings.market_scope == MarketScope.RUSSIAN_STOCKS
             and buy.market_type != MarketType.RUSSIAN_STOCKS
@@ -433,7 +505,8 @@ def opportunities(explain: bool = False) -> dict[str, object]:
                 continue
             age = timestamp - min(buy.timestamp_ms, sell.timestamp_ms)
             simulation_notional = min(
-                Decimal("10"), item.max_notional_usd,
+                Decimal("10"),
+                item.max_notional_usd,
                 Decimal(str(settings.max_trade_notional_usd)),
             )
             if explain:
@@ -449,7 +522,8 @@ def opportunities(explain: bool = False) -> dict[str, object]:
                 settings.trading_mode != TradingMode.PAPER or settings.live_trading_enabled
             ):
                 decision = RiskDecision(
-                    False, "Simulation requires paper mode with live disabled",
+                    False,
+                    "Simulation requires paper mode with live disabled",
                     reason_code="live_trading_locked",
                 )
             candidate: dict[str, object] = {
@@ -489,16 +563,20 @@ def record_detected_opportunities() -> None:
             continue
         _LAST_SIGNALS[key] = candidate["id"]
         for event in (
-            "opportunity_detected", "risk_approved" if candidate["approved"] else "risk_rejected",
+            "opportunity_detected",
+            "risk_approved" if candidate["approved"] else "risk_rejected",
         ):
-            persistent: PersistentAuditLog | None = getattr(
-                app.state, "persistent_audit", None
-            )
+            persistent: PersistentAuditLog | None = getattr(app.state, "persistent_audit", None)
             if persistent is None:
                 audit_log.record(
-                    event, candidate["reason_text"], settings.market_scope, candidate["strategy"],
-                    who="market_data_producer", decision=candidate["risk_score"],
-                    reason_code=candidate["reason_code"], opportunity_id=candidate["id"],
+                    event,
+                    candidate["reason_text"],
+                    settings.market_scope,
+                    candidate["strategy"],
+                    who="market_data_producer",
+                    decision=candidate["risk_score"],
+                    reason_code=candidate["reason_code"],
+                    opportunity_id=candidate["id"],
                 )
             else:
                 persistent.record(
@@ -588,12 +666,8 @@ def _paper_market_context(
     notional: Decimal,
 ) -> tuple[ArbitrageOpportunity, NormalizedOrderBook | None, NormalizedOrderBook | None]:
     market_data: MarketDataService | None = getattr(app.state, "market_data", None)
-    buy_book = (
-        None if market_data is None else market_data.book_for_simulation(buy_venue, symbol)
-    )
-    sell_book = (
-        None if market_data is None else market_data.book_for_simulation(sell_venue, symbol)
-    )
+    buy_book = None if market_data is None else market_data.book_for_simulation(buy_venue, symbol)
+    sell_book = None if market_data is None else market_data.book_for_simulation(sell_venue, symbol)
     item = ArbitrageOpportunity(
         "cross_venue_spread",
         symbol,
@@ -609,9 +683,7 @@ def _paper_market_context(
     if buy_book is not None and sell_book is not None:
         try:
             buy, sell = buy_book.to_quote(), sell_book.to_quote()
-            item = CrossVenueSpreadMonitor().detect(
-                buy, sell, Decimal("0.20"), Decimal("0.05")
-            )
+            item = CrossVenueSpreadMonitor().detect(buy, sell, Decimal("0.20"), Decimal("0.05"))
             item = replace(item, max_notional_usd=notional)
         except (ValueError, IndexError):
             pass
@@ -642,9 +714,7 @@ def _position_view(position: dict[str, object]) -> dict[str, object]:
     )
 
 
-def _paper_result(
-    service: PersistentPaperService, result: dict[str, object]
-) -> dict[str, object]:
+def _paper_result(service: PersistentPaperService, result: dict[str, object]) -> dict[str, object]:
     raw_account = result.get("account")
     account = (
         dict(raw_account)
@@ -658,9 +728,7 @@ def _paper_result(
         else service.store.list_positions(settings.paper_account_id)
     )
     positions = [
-        _position_view(position)
-        for position in stored_positions
-        if isinstance(position, dict)
+        _position_view(position) for position in stored_positions if isinstance(position, dict)
     ]
     raw_order = result.get("order", {})
     order = dict(raw_order) if isinstance(raw_order, dict) else {}
@@ -743,9 +811,16 @@ async def simulate_paper_order(body: PaperSimulationRequest, request: Request) -
     )
     # No caller-supplied quotes or risk flags. Missing books form a rejected intent only.
     item = ArbitrageOpportunity(
-        "cross_venue_spread", body.symbol, body.buy_venue, body.sell_venue,
-        Decimal("0"), Decimal("-0.25"), body.notional_usd, now_ms(),
-        fees_pct=Decimal("0.20"), slippage_pct=Decimal("0.05"),
+        "cross_venue_spread",
+        body.symbol,
+        body.buy_venue,
+        body.sell_venue,
+        Decimal("0"),
+        Decimal("-0.25"),
+        body.notional_usd,
+        now_ms(),
+        fees_pct=Decimal("0.20"),
+        slippage_pct=Decimal("0.05"),
     )
     opportunity_id = str(uuid4())
     if buy_book is not None and sell_book is not None:
@@ -759,15 +834,25 @@ async def simulate_paper_order(body: PaperSimulationRequest, request: Request) -
         except (ValueError, IndexError):
             pass  # Engine independently rejects invalid identity/depth.
     report = paper_engine.simulate(
-        item, buy_book, sell_book, notional_usd=body.notional_usd, settings=settings,
+        item,
+        buy_book,
+        sell_book,
+        notional_usd=body.notional_usd,
+        settings=settings,
     )
     common = {
-        "who": "local_paper_user", "execution_id": report.execution_id,
-        "opportunity_id": opportunity_id, "reason_code": report.reason_code,
+        "who": "local_paper_user",
+        "execution_id": report.execution_id,
+        "opportunity_id": opportunity_id,
+        "reason_code": report.reason_code,
         "decision": report.status,
     }
     audit_log.record(
-        "opportunity_detected", report.reason_text, settings.market_scope, item.strategy, **common,
+        "opportunity_detected",
+        report.reason_text,
+        settings.market_scope,
+        item.strategy,
+        **common,
     )
     for event in (
         "risk_approved" if report.status == "filled" else "risk_rejected",
@@ -776,11 +861,17 @@ async def simulate_paper_order(body: PaperSimulationRequest, request: Request) -
         audit_log.record(event, report.reason_text, settings.market_scope, item.strategy, **common)
     for fill in report.fills:
         audit_log.record(
-            "paper_fill_simulated", fill.reason_text, settings.market_scope,
-            item.strategy, **common,
+            "paper_fill_simulated",
+            fill.reason_text,
+            settings.market_scope,
+            item.strategy,
+            **common,
         )
     audit_log.record(
-        "reconciliation_completed", report.reason_text, settings.market_scope, item.strategy,
+        "reconciliation_completed",
+        report.reason_text,
+        settings.market_scope,
+        item.strategy,
         **common,
     )
     return serialize_record({**asdict(report), "explanation": explain_paper_execution(report)})
@@ -842,18 +933,22 @@ def okx_spot_paper_history(limit: int = 50) -> dict[str, object]:
         raise HTTPException(503, "OKX spot paper service unavailable")
     with service.store.transaction() as conn:
         account_id = settings.okx_spot_paper_account_id
-        return serialize_record({
-            "account_id": account_id, "paper_only": True, "live_execution": False,
-            "orders": service.store.list_orders(account_id, conn=conn)[:limit],
-            "fills": service.store.list_fills(account_id, conn=conn)[:limit],
-            "accounting_reconciliation": reconcile_records(
-                service._account(account_id, conn),
-                service.store.list_balances(account_id, conn=conn),
-                service.store.list_orders(account_id, conn=conn),
-                service.store.list_fills(account_id, conn=conn),
-                service.store.list_positions(account_id, conn=conn),
-            ),
-        })
+        return serialize_record(
+            {
+                "account_id": account_id,
+                "paper_only": True,
+                "live_execution": False,
+                "orders": service.store.list_orders(account_id, conn=conn)[:limit],
+                "fills": service.store.list_fills(account_id, conn=conn)[:limit],
+                "accounting_reconciliation": reconcile_records(
+                    service._account(account_id, conn),
+                    service.store.list_balances(account_id, conn=conn),
+                    service.store.list_orders(account_id, conn=conn),
+                    service.store.list_fills(account_id, conn=conn),
+                    service.store.list_positions(account_id, conn=conn),
+                ),
+            }
+        )
 
 
 @app.post("/paper/okx/orders")
@@ -874,8 +969,12 @@ async def create_okx_spot_paper_order(
     book = None if market_data is None else market_data.book_for_simulation(Venue.OKX, body.symbol)
     try:
         result = service.execute_spot(
-            symbol=body.symbol, side=body.side, notional_usdt=body.notional_usdt,
-            book=book, settings=settings, idempotency_key=idempotency_key,
+            symbol=body.symbol,
+            side=body.side,
+            notional_usdt=body.notional_usdt,
+            book=book,
+            settings=settings,
+            idempotency_key=idempotency_key,
             account_id=settings.okx_spot_paper_account_id,
         )
     except PaperCommandError as error:
@@ -986,13 +1085,15 @@ def paper_residual_exposure() -> dict[str, object]:
             reconciliation_ok=accounting_ok,
         )
         observations.append(
-            serialize_record({
-                "execution_group_id": order_id,
-                "symbol": order["symbol"],
-                "decision": decision.as_dict(),
-                "paper_only": True,
-                "live_execution": False,
-            })
+            serialize_record(
+                {
+                    "execution_group_id": order_id,
+                    "symbol": order["symbol"],
+                    "decision": decision.as_dict(),
+                    "paper_only": True,
+                    "live_execution": False,
+                }
+            )
         )
     return {"items": observations, "paper_only": True, "live_execution": False}
 

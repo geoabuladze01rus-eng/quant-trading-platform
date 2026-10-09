@@ -74,3 +74,11 @@ before becoming a durable paper execution lifecycle.
 Market quote snapshots and unchanged-signal deduplication remain in memory because
 they are transient feed state. Durable trading/audit state does not rely on those
 caches. Live execution is not implemented.
+
+## Direct OKX paper bot control v5
+
+Watch → Decision Engine → Risk gates → Notification Router control intent →
+local paper OKX BotManager → atomic state/risk/audit/outbox commit. Delivery uses
+an independent worker. TradingView is optional visualization and has no role in
+execution or STOP/CLOSE. Real exchange bot write methods are absent. See
+[execution flow and policies](DIRECT_OKX_CONTROL_V5.md).

@@ -18,6 +18,7 @@ dependencies = [
     "numpy>=1.26",
     "fastapi>=0.115",
     "uvicorn>=0.30",
+    "PyYAML>=6.0.3",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +29,9 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
     "mypy>=1.10",
+    "black>=26.0",
+    "types-PyYAML>=6.0.12",
+    "pytest-cov>=7.0",
 ]
 
 [tool.setuptools.packages.find]

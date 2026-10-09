@@ -15,8 +15,13 @@ from quant_trading_platform.signal_watch.journal import Candidate, Journal
 
 CHANNELS = ("chatgpt_push", "email", "telegram")
 Status = Literal[
-    "PENDING", "SENT", "DELIVERY_FAILED", "DELIVERY_UNCERTAIN", "SKIPPED",
-    "NO_SETUP", "DATA_BLOCKED",
+    "PENDING",
+    "SENT",
+    "DELIVERY_FAILED",
+    "DELIVERY_UNCERTAIN",
+    "SKIPPED",
+    "NO_SETUP",
+    "DATA_BLOCKED",
 ]
 LOGGER = logging.getLogger(__name__)
 
@@ -59,8 +64,39 @@ class Channel(Protocol):
 
 
 class NotificationRouter:
+    def dispatch_paper_control(
+        self,
+        event_id: str,
+        signal_id: str,
+        bot_id: str | None,
+        action: Callable[[], dict[str, object]],
+    ) -> dict[str, object]:
+        """Reserve the control intent before the simulated write, in the caller's transaction."""
+        connection = self.journal.connection
+        if not connection.in_transaction:
+            raise ValueError("Paper control requires an atomic execution transaction")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS notification_bot_intents ("
+            "event_id TEXT PRIMARY KEY, signal_id TEXT UNIQUE, bot_id TEXT, response TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO notification_bot_intents VALUES (?,?,?,NULL)",
+            (event_id, signal_id, bot_id),
+        )
+        response = action()
+        if response.get("paper_only") is not True or response.get("live_execution") is not False:
+            raise ValueError("Live control is prohibited")
+        connection.execute(
+            "UPDATE notification_bot_intents SET response=? WHERE event_id=?",
+            (json.dumps(response), event_id),
+        )
+        return response
+
     def __init__(
-        self, journal: Journal, channels: Mapping[str, Channel], *,
+        self,
+        journal: Journal,
+        channels: Mapping[str, Channel],
+        *,
         sleep: Callable[[int], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], int] = lambda: time_ns() // 1_000_000,
         channel_timeout_seconds: int = 20,
@@ -88,7 +124,8 @@ class NotificationRouter:
     def result(self, signal_id: str) -> DeliveryResult | None:
         row = self.journal.connection.execute(
             "SELECT event_id, signal_id, created_at, delivery_status, retry_count "
-            "FROM notification_events WHERE signal_id=?", (signal_id,),
+            "FROM notification_events WHERE signal_id=?",
+            (signal_id,),
         ).fetchone()
         return DeliveryResult(*row) if row else None
 
@@ -101,31 +138,74 @@ class NotificationRouter:
         return DeliveryResult(event.event_id, event.signal_id, event.created_at, status, retries)
 
     def _log(
-        self, event: Event, channel: str, status: Status, retry_count: int, latency: int,
-        *, message_id: str | None = None, error: str | None = None,
+        self,
+        event: Event,
+        channel: str,
+        status: Status,
+        retry_count: int,
+        latency: int,
+        *,
+        message_id: str | None = None,
+        error: str | None = None,
     ) -> None:
         chat_id = "8999343417" if channel == "telegram" else None
-        values = (event.signal_id, channel, message_id, chat_id, status, error,
-                  retry_count, latency, self.clock())
+        values = (
+            event.signal_id,
+            channel,
+            message_id,
+            chat_id,
+            status,
+            error,
+            retry_count,
+            latency,
+            self.clock(),
+        )
         with self.journal.connection:
             self.journal.connection.execute(
                 "INSERT INTO notification_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", values
             )
-        LOGGER.info("notification_delivery", extra=dict(zip(
-            ("signal_id", "channel", "message_id", "chat_id", "delivery_status", "error",
-             "retry_count", "latency", "timestamp"), values, strict=True,
-        )))
+        LOGGER.info(
+            "notification_delivery",
+            extra=dict(
+                zip(
+                    (
+                        "signal_id",
+                        "channel",
+                        "message_id",
+                        "chat_id",
+                        "delivery_status",
+                        "error",
+                        "retry_count",
+                        "latency",
+                        "timestamp",
+                    ),
+                    values,
+                    strict=True,
+                )
+            ),
+        )
 
     async def route(
-        self, signal_id: str, text: str, *, disposition: Status = "PENDING",
+        self,
+        signal_id: str,
+        text: str,
+        *,
+        disposition: Status = "PENDING",
         valid_until_ms: int | None = None,
     ) -> DeliveryResult:
-        if not signal_id.strip() or not text.strip() or disposition not in (
-            "PENDING", "SKIPPED", "NO_SETUP", "DATA_BLOCKED"
+        if (
+            not signal_id.strip()
+            or not text.strip()
+            or disposition not in ("PENDING", "SKIPPED", "NO_SETUP", "DATA_BLOCKED")
         ):
             raise ValueError("Invalid notification event")
-        event = Event(hashlib.sha256(("notification:" + signal_id).encode()).hexdigest(),
-                      signal_id, self.clock(), text, valid_until_ms=valid_until_ms)
+        event = Event(
+            hashlib.sha256(("notification:" + signal_id).encode()).hexdigest(),
+            signal_id,
+            self.clock(),
+            text,
+            valid_until_ms=valid_until_ms,
+        )
         with self.journal.connection:
             inserted = self.journal.connection.execute(
                 "INSERT OR IGNORE INTO notification_events VALUES (?, ?, ?, ?, 0)",
@@ -144,9 +224,12 @@ class NotificationRouter:
         legacy = self.journal.connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='signal_deliveries'"
         ).fetchone()
-        if legacy and self.journal.connection.execute(
-            "SELECT 1 FROM signal_deliveries WHERE signal_id=?", (signal_id,)
-        ).fetchone():
+        if (
+            legacy
+            and self.journal.connection.execute(
+                "SELECT 1 FROM signal_deliveries WHERE signal_id=?", (signal_id,)
+            ).fetchone()
+        ):
             return self._finish(event, "DELIVERY_UNCERTAIN", 0)
         self.active.add(signal_id)
         states: list[Status] = []
@@ -174,9 +257,11 @@ class NotificationRouter:
                             sender.send(replace(event, retry_count=attempt)),
                             timeout=self.channel_timeout_seconds,
                         )
-                        if (not isinstance(receipt, Receipt)
-                                or not isinstance(receipt.message_id, str)
-                                or not receipt.message_id.strip()):
+                        if (
+                            not isinstance(receipt, Receipt)
+                            or not isinstance(receipt.message_id, str)
+                            or not receipt.message_id.strip()
+                        ):
                             error = "missing_message_id"
                         else:
                             message_id, status = receipt.message_id, "SENT"
@@ -188,8 +273,15 @@ class NotificationRouter:
                             retry_delay = max(2**attempt, exc.retry_after)
                     except Exception:
                         status, error = "DELIVERY_UNCERTAIN", "delivery_outcome_unknown"
-                    self._log(event, name, status, attempt, (monotonic_ns() - started) // 1_000_000,
-                              message_id=message_id, error=error)
+                    self._log(
+                        event,
+                        name,
+                        status,
+                        attempt,
+                        (monotonic_ns() - started) // 1_000_000,
+                        message_id=message_id,
+                        error=error,
+                    )
                     if retry_delay is None:
                         states.append(status)
                         break
@@ -207,7 +299,11 @@ class NotificationRouter:
             self.active.discard(signal_id)
 
     async def deliver(
-        self, candidate: Candidate, *, valid_until_ms: int, data_blocked: bool = False,
+        self,
+        candidate: Candidate,
+        *,
+        valid_until_ms: int,
+        data_blocked: bool = False,
     ) -> DeliveryResult:
         self.journal.record(candidate)
         disposition: Status = "PENDING"
@@ -221,20 +317,32 @@ class NotificationRouter:
             disposition = "NO_SETUP"
         # Keep full provenance in the journal, not in an oversized Telegram message.
         payload = candidate.payload()
-        summary = {key: payload[key] for key in (
-            "asset", "setup", "score", "domains", "confidence", "market_regime",
-            "timestamp_ms", "paper_only", "live_execution",
-        )}
+        summary = {
+            key: payload[key]
+            for key in (
+                "asset",
+                "setup",
+                "score",
+                "domains",
+                "confidence",
+                "market_regime",
+                "timestamp_ms",
+                "paper_only",
+                "live_execution",
+            )
+        }
         summary["signal_id"] = candidate.signal_id
         return await self.route(
-            candidate.signal_id, "PAPER ONLY · Crypto Signal Watch v4\n" + json.dumps(
-                summary, ensure_ascii=False
-            ), disposition=disposition, valid_until_ms=valid_until_ms,
+            candidate.signal_id,
+            "PAPER ONLY · Crypto Signal Watch v4\n" + json.dumps(summary, ensure_ascii=False),
+            disposition=disposition,
+            valid_until_ms=valid_until_ms,
         )
 
     def snapshot(self, limit: int = 100) -> list[dict[str, object]]:
         rows = self.journal.connection.execute(
             "SELECT event_id, signal_id, created_at, delivery_status, retry_count "
-            "FROM notification_events ORDER BY rowid DESC LIMIT ?", (limit,),
+            "FROM notification_events ORDER BY rowid DESC LIMIT ?",
+            (limit,),
         ).fetchall()
         return [cast(dict[str, object], asdict(DeliveryResult(*row))) for row in rows]

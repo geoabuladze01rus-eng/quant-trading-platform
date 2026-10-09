@@ -1,5 +1,12 @@
 # Quant Trading Platform
 
+## Crypto Signal Watch v5
+
+Direct paper bot control works without TradingView: Watch → Decision/Risk Engine →
+Notification Router → local paper OKX Controller. Real exchange bot writes remain
+disabled. START/STOP/PAUSE/RESUME/CLOSE change only the durable paper lifecycle;
+notifications run independently. See [v5 execution flow and limits](docs/DIRECT_OKX_CONTROL_V5.md).
+
 ## Automatic OKX spot paper runner
 
 The local Docker Compose profile enables a durable daily-trend paper runner on
