@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from decimal import Decimal
 from pathlib import Path
 from time import time
@@ -64,15 +65,37 @@ def journal_path_from_env() -> Path:
     return Path(raw)
 
 
-def main() -> None:
+STRATEGIES = ("intraday", "spot-candidates")
+
+
+def build_service(strategy: str) -> SnapshotService:
     # Imported here so the journal logic can be tested without the HTTP client.
-    from quant_trading_platform.market_data.intraday_research import IntradayResearchService
     from quant_trading_platform.market_data.okx_candles import OKXCandleSource
 
+    source = OKXCandleSource()
+    if strategy == "spot-candidates":
+        from quant_trading_platform.market_data.spot_candidate_research import (
+            SpotCandidateResearchService,
+        )
+
+        return SpotCandidateResearchService(source)
+    from quant_trading_platform.market_data.intraday_research import IntradayResearchService
+
+    return IntradayResearchService(source)
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run one manual dry-run poll. Usage: dry_run_journal [intraday|spot-candidates]."""
+    args = sys.argv[1:] if argv is None else argv
+    strategy = args[0] if args else "intraday"
+    if strategy not in STRATEGIES:
+        raise SystemExit(f"unknown strategy {strategy!r}; choose one of {STRATEGIES}")
     path = journal_path_from_env()
-    service = IntradayResearchService(OKXCandleSource())
-    snapshot = asyncio.run(run_dry_research(service, path))
-    print(f"dry run recorded: status={snapshot.get('status')} telegram=not_sent")
+    snapshot = asyncio.run(run_dry_research(build_service(strategy), path))
+    print(
+        f"dry run recorded: strategy={strategy} status={snapshot.get('status')} "
+        "telegram=not_sent"
+    )
 
 
 if __name__ == "__main__":

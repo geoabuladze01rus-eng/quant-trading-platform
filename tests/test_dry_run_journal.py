@@ -68,6 +68,19 @@ class DryRunJournalTests(unittest.TestCase):
             if previous is not None:
                 os.environ["DRY_RUN_JOURNAL_PATH"] = previous
 
+    def test_unknown_strategy_is_rejected_before_any_fetch(self) -> None:
+        import os
+
+        from quant_trading_platform.notifications.dry_run_journal import main
+
+        os.environ["DRY_RUN_JOURNAL_PATH"] = str(self.path)
+        try:
+            with self.assertRaises(SystemExit):
+                main(["made-up"])
+        finally:
+            os.environ.pop("DRY_RUN_JOURNAL_PATH", None)
+        self.assertFalse(self.path.exists())
+
     def test_journal_module_does_not_reference_telegram_delivery(self) -> None:
         source = Path(
             "src/quant_trading_platform/notifications/dry_run_journal.py"
