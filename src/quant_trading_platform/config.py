@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     okx_spot_max_asset_pct: Decimal = Field(default=Decimal("5"), gt=0, le=10)
     okx_spot_max_total_pct: Decimal = Field(default=Decimal("10"), gt=0, le=20)
     okx_spot_auto_enabled: bool = False
+    intraday_research_enabled: bool = False
+    intraday_research_interval_seconds: float = Field(default=3600, ge=300, le=86400)
     okx_spot_auto_interval_seconds: float = Field(default=5, ge=1, le=60)
     okx_spot_auto_max_spread_pct: Decimal = Field(default=Decimal("0.20"), gt=0, le=1)
     okx_spot_auto_max_entry_deviation_pct: Decimal = Field(default=Decimal("2"), gt=0, le=5)

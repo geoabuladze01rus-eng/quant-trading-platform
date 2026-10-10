@@ -6,6 +6,7 @@ and never hides the others. Candidates expire when the snapshot is older than tw
 """
 
 import asyncio
+from contextlib import suppress
 from dataclasses import asdict
 from time import time
 
@@ -22,11 +23,13 @@ BAR_1H = "1H"
 
 
 class IntradayResearchService:
-    def __init__(self, source: OKXCandleSource, interval_seconds: int = 3600) -> None:
+    def __init__(self, source: OKXCandleSource, interval_seconds: float = 3600) -> None:
         self.source = source
         self.interval_seconds = interval_seconds
         self._results: dict[str, dict[str, object]] = {}
         self._polled_at_ms: int | None = None
+        self._task: asyncio.Task[None] | None = None
+        self._stop = asyncio.Event()
 
     def _fetch_candidate(self, symbol: str, now_ms: int) -> dict[str, object]:
         try:
@@ -63,3 +66,23 @@ class IntradayResearchService:
                 "live_execution": False, "candidates": rows,
                 "reason": "Кандидаты для ручной проверки; заявки не создаются."}
 
+    async def _run(self) -> None:
+        while not self._stop.is_set():
+            await self.poll_once()
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), timeout=self.interval_seconds)
+
+    async def start(self) -> None:
+        self._stop.clear()
+        self._task = asyncio.create_task(self._run(), name="okx-intraday-research")
+
+    async def stop(self) -> None:
+        self._stop.set()
+        try:
+            if self._task is not None:
+                await self._task
+        finally:
+            self._task = None
+            self._results = {}
+            self._polled_at_ms = None
+            self.source.close()

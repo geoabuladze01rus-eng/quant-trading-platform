@@ -87,3 +87,21 @@ def test_clock_is_real_time_for_default_snapshot() -> None:
     service = refreshed()
     assert service.snapshot()["status"] == "ok"
     assert int(time() * 1000) >= (service._polled_at_ms or 0)
+
+
+def test_start_polls_then_stop_clears_cache_and_closes_source() -> None:
+    async def scenario() -> tuple[IntradayResearchService, FakeSource]:
+        source = FakeSource()
+        service = IntradayResearchService(source, interval_seconds=3600)  # type: ignore[arg-type]
+        await service.start()
+        for _ in range(100):
+            if service._polled_at_ms is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert service.snapshot()["status"] == "ok"
+        await service.stop()
+        return service, source
+
+    service, source = asyncio.run(scenario())
+    assert source.closed
+    assert service.snapshot()["status"] == "no_data"
