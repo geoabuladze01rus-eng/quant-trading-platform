@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 DAY_MS = 86_400_000
+# Paper trading, rotation and history universe. Do not change without reviewing paper accounting.
 SYMBOLS = ("BTC/USDT", "ETH/USDT", "LTC/USDT")
+# Read-only research universe; extra pairs here never create paper balances or orders.
+RESEARCH_SYMBOLS = (*SYMBOLS, "SOL/USDT")
 
 
 @dataclass(frozen=True)
@@ -60,7 +63,7 @@ def validate_candles(candles: tuple[DailyCandle, ...], *, now_ms: int) -> None:
 
 def trend_signal(symbol: str, candles: tuple[DailyCandle, ...]) -> SpotSignal:
     """20-day breakout above SMA100; 10-day low or SMA100 is an exit warning."""
-    if symbol not in SYMBOLS:
+    if symbol not in RESEARCH_SYMBOLS:
         raise ValueError("Unsupported OKX USDT spot pair")
     current = candles[-1]
     average = sum((c.close for c in candles[-100:]), Decimal(0)) / 100
@@ -76,10 +79,11 @@ def trend_signal(symbol: str, candles: tuple[DailyCandle, ...]) -> SpotSignal:
 
 def relative_strength_signals(
     series: dict[str, tuple[DailyCandle, ...]],
+    symbols: tuple[str, ...] = SYMBOLS,
 ) -> list[SpotSignal]:
     """Select at most one positive 30/60-day leader; no short sales."""
-    if set(series) != set(SYMBOLS):
-        raise ValueError("All three OKX spot pairs are required")
+    if set(series) != set(symbols) or len(symbols) < 2:
+        raise ValueError("All OKX spot pairs in the ranking must be provided")
     timestamps = {candles[-1].timestamp_ms for candles in series.values()}
     if len(timestamps) != 1:
         raise ValueError("Spot pairs do not share a completed candle date")
@@ -93,7 +97,7 @@ def relative_strength_signals(
             scores[symbol] = (return_30 + return_60) / 2
     leader = max(scores, key=lambda symbol: (scores[symbol], symbol)) if scores else None
     result = []
-    for symbol in SYMBOLS:
+    for symbol in symbols:
         current = series[symbol][-1]
         if symbol == leader:
             action, code, reason = (

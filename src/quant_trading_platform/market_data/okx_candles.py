@@ -7,7 +7,7 @@ import httpx
 
 from quant_trading_platform.strategies.spot_momentum import (
     DAY_MS,
-    SYMBOLS,
+    RESEARCH_SYMBOLS,
     DailyCandle,
     validate_candles,
 )
@@ -25,7 +25,7 @@ class OKXCandleSource:
             self._client.close()
 
     def fetch(self, symbol: str, *, now_ms: int) -> tuple[DailyCandle, ...]:
-        if symbol not in SYMBOLS:
+        if symbol not in RESEARCH_SYMBOLS:
             raise ValueError("Unsupported OKX USDT spot pair")
         request = httpx.Request(
             "GET", self.endpoint,
