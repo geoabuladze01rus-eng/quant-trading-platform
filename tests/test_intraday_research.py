@@ -34,7 +34,7 @@ class FakeSource:
     def fetch(self, symbol: str, *, now_ms: int, bar: str) -> tuple[DailyCandle, ...]:
         if symbol in self.failing:
             raise ValueError("OKX public candles unavailable")
-        if bar == "4Hutc":
+        if bar == "4H":
             end = last_closed(now_ms, H4)
             closes = [Decimal(100) + Decimal("0.5") * i for i in range(120)]
             return series(closes, H4, end, Decimal(1))

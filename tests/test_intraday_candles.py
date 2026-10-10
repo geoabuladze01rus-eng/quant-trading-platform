@@ -29,8 +29,8 @@ def last_closed_bar_ms(now_ms: int, interval_ms: int) -> int:
 
 def test_supported_bars_have_expected_lengths() -> None:
     assert BAR_MS["1Dutc"] == DAY_MS
-    assert BAR_MS["4Hutc"] == 4 * HOUR_MS
-    assert BAR_MS["1Hutc"] == HOUR_MS
+    assert BAR_MS["4H"] == 4 * HOUR_MS
+    assert BAR_MS["1H"] == HOUR_MS
     assert BAR_MS["15m"] == 15 * 60_000
     assert BAR_MS["5m"] == 5 * 60_000
     assert "1m" not in BAR_MS

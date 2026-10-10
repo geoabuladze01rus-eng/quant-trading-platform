@@ -34,13 +34,13 @@ def test_fetch_requests_four_hour_bar_and_validates_interval() -> None:
     candles = bars(end)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.params["bar"] == "4Hutc"
+        assert request.url.params["bar"] == "4H"
         assert request.url.params["instId"] == "BTC-USDT"
         assert "authorization" not in request.headers
         return httpx.Response(200, json={"code": "0", "data": okx_rows(candles)})
 
     source = OKXCandleSource(httpx.Client(transport=httpx.MockTransport(handler)))
-    assert source.fetch("BTC/USDT", now_ms=now_ms, bar="4Hutc") == tuple(candles)
+    assert source.fetch("BTC/USDT", now_ms=now_ms, bar="4H") == tuple(candles)
 
 
 def test_unconfirmed_open_bar_is_excluded() -> None:
@@ -54,7 +54,7 @@ def test_unconfirmed_open_bar_is_excluded() -> None:
         return httpx.Response(200, json={"code": "0", "data": rows})
 
     source = OKXCandleSource(httpx.Client(transport=httpx.MockTransport(handler)))
-    assert source.fetch("BTC/USDT", now_ms=now_ms, bar="4Hutc") == tuple(candles[:-1])
+    assert source.fetch("BTC/USDT", now_ms=now_ms, bar="4H") == tuple(candles[:-1])
 
 
 def test_confirmed_open_bar_fails_closed() -> None:
@@ -68,7 +68,7 @@ def test_confirmed_open_bar_fails_closed() -> None:
 
     source = OKXCandleSource(httpx.Client(transport=httpx.MockTransport(handler)))
     with pytest.raises(ValueError, match="Incomplete"):
-        source.fetch("BTC/USDT", now_ms=now_ms, bar="4Hutc")
+        source.fetch("BTC/USDT", now_ms=now_ms, bar="4H")
 
 
 def test_unknown_bar_is_rejected() -> None:

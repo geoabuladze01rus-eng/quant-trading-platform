@@ -40,8 +40,8 @@ HOUR_MS = 3_600_000
 # OKX bar names accepted by the public candle source, with their candle length in ms.
 BAR_MS = {
     "1Dutc": DAY_MS,
-    "4Hutc": 4 * HOUR_MS,
-    "1Hutc": HOUR_MS,
+    "4H": 4 * HOUR_MS,
+    "1H": HOUR_MS,
     "15m": 15 * 60_000,
     "5m": 5 * 60_000,
 }

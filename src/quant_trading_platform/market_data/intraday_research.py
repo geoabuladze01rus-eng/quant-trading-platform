@@ -17,8 +17,8 @@ from quant_trading_platform.strategies.spot_momentum import (
     validate_candles,
 )
 
-BAR_4H = "4Hutc"
-BAR_1H = "1Hutc"
+BAR_4H = "4H"
+BAR_1H = "1H"
 
 
 class IntradayResearchService:

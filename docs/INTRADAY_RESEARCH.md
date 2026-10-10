@@ -8,8 +8,8 @@ execution. Every output carries `paper_only: true` and `live_execution: false`.
 - `strategies/indicators.py` — SMA, EMA, RSI and ATR (Wilder), VWAP. `Decimal` only.
 - `strategies/intraday_trend.py` — `intraday_candidate(symbol, candles_4h, candles_1h)`.
 - `market_data/intraday_research.py` — `IntradayResearchService`, a per-symbol snapshot.
-- `market_data/okx_candles.py` — `fetch(symbol, now_ms=..., bar=...)` for `4Hutc`,
-  `1Hutc`, `15m`, `5m` and `1Dutc` (the default).
+- `market_data/okx_candles.py` — `fetch(symbol, now_ms=..., bar=...)` for `4H`,
+  `1H`, `15m`, `5m` and `1Dutc` (the default).
 
 ## Rules
 
@@ -38,7 +38,7 @@ execution. Every output carries `paper_only: true` and `live_execution: false`.
 - Thresholds are conservative proposals and have not been back-tested.
 - The sandbox used to write this code could not reach OKX. The `bar` values were taken
   from the OKX documentation and must be confirmed against a live response before use:
-  `https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=4Hutc&limit=2`.
+  `https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=4H&limit=2`.
 - Symbols are the research universe `BTC/USDT`, `ETH/USDT`, `LTC/USDT`, `SOL/USDT`.
   The paper-trading universe (`SYMBOLS`) remains BTC, ETH and LTC.
 
