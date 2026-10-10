@@ -1,6 +1,13 @@
+import json
+import tempfile
 import unittest
 from decimal import Decimal
+from pathlib import Path
 
+from quant_trading_platform.notifications.delivery_store import (
+    DeliveryStoreError,
+    FileDeliveryStore,
+)
 from quant_trading_platform.notifications.telegram_signals import (
     SpotSignal,
     TelegramDeliveryError,
@@ -95,7 +102,7 @@ class TelegramSignalTests(unittest.TestCase):
         with self.assertRaises(TelegramDeliveryError) as ctx:
             notifier.deliver(make_signal())
         self.assertNotIn(FAKE_BOT_CREDENTIAL, str(ctx.exception))
-        self.assertNotIn("BTC-USDT-2026-10-10-1H", notifier.delivered_ids)
+        self.assertFalse(notifier.store.contains("BTC-USDT-2026-10-10-1H"))
 
     def test_rejected_message_raises(self) -> None:
         transport = FakeTransport([{"ok": False}])
@@ -113,6 +120,53 @@ class TelegramSignalTests(unittest.TestCase):
             "Данные проверены",
         ):
             self.assertIn(needle, text)
+
+
+class FileDeliveryStoreTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self._tmp.name) / "delivered.json"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def notifier(self, transport: FakeTransport, store: object) -> TelegramSignalNotifier:
+        return TelegramSignalNotifier(
+            chat_id="8999343417",
+            _token=FAKE_BOT_CREDENTIAL,
+            transport=transport,
+            sleep=lambda _: None,
+            store=store,  # type: ignore[arg-type]
+        )
+
+    def test_delivered_signal_is_not_resent_after_restart(self) -> None:
+        first = FakeTransport([{"ok": True}])
+        self.assertTrue(self.notifier(first, FileDeliveryStore(self.path)).deliver(make_signal()))
+
+        second = FakeTransport([])
+        restarted = self.notifier(second, FileDeliveryStore(self.path))
+        self.assertFalse(restarted.deliver(make_signal()))
+        self.assertEqual(second.calls, [])
+
+    def test_corrupt_store_fails_closed(self) -> None:
+        self.path.write_text("{not json", encoding="utf-8")
+        with self.assertRaises(DeliveryStoreError):
+            FileDeliveryStore(self.path)
+
+    def test_unexpected_store_format_fails_closed(self) -> None:
+        self.path.write_text('{"id": 1}', encoding="utf-8")
+        with self.assertRaises(DeliveryStoreError):
+            FileDeliveryStore(self.path)
+
+    def test_write_leaves_no_temp_files(self) -> None:
+        store = FileDeliveryStore(self.path)
+        store.add("sig-1")
+        store.add("sig-2")
+        leftovers = [p.name for p in Path(self._tmp.name).iterdir() if p.name != "delivered.json"]
+        self.assertEqual(leftovers, [])
+        self.assertEqual(
+            sorted(json.loads(self.path.read_text(encoding="utf-8"))), ["sig-1", "sig-2"]
+        )
 
 
 if __name__ == "__main__":

@@ -17,6 +17,11 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final
 
+from quant_trading_platform.notifications.delivery_store import (
+    DeliveredSignalStore,
+    InMemoryDeliveryStore,
+)
+
 logger = logging.getLogger(__name__)
 
 ALLOWED_CONFIDENCE: Final[frozenset[str]] = frozenset({"HIGH", "VERY HIGH"})
@@ -109,7 +114,7 @@ class TelegramSignalNotifier:
     _token: str = field(repr=False)
     transport: Transport = _default_transport
     sleep: Callable[[float], None] = time.sleep
-    delivered_ids: set[str] = field(default_factory=set)
+    store: DeliveredSignalStore = field(default_factory=InMemoryDeliveryStore)
 
     def _send_text(self, text: str) -> None:
         url = f"{TELEGRAM_API}/bot{self._token}/sendMessage"
@@ -131,10 +136,10 @@ class TelegramSignalNotifier:
         """Send a signal once. Returns False if skipped as ineligible or duplicate."""
         if not should_deliver(signal):
             return False
-        if signal.signal_id in self.delivered_ids:
+        if self.store.contains(signal.signal_id):
             return False
         self._send_text(format_signal(signal))
-        self.delivered_ids.add(signal.signal_id)
+        self.store.add(signal.signal_id)
         return True
 
     def deliver_all(self, signals: Iterable[SpotSignal]) -> int:
