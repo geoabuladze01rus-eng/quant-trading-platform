@@ -3,12 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from spot_fixtures import NOW_MS, base_inputs
+
 from quant_trading_platform.market_data.spot_candidate_research import (
     SpotCandidateResearchService,
 )
 from quant_trading_platform.notifications.dry_run_journal import append_record
 from quant_trading_platform.strategies.spot_momentum import RESEARCH_SYMBOLS, DailyCandle
-from spot_fixtures import NOW_MS, base_inputs
 
 
 class FakeSource:

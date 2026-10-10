@@ -1,13 +1,13 @@
 import unittest
 from decimal import Decimal
 
+from spot_fixtures import NOW_MS, base_inputs, candles, rising, run
+
 from quant_trading_platform.strategies.spot_momentum import BAR_MS, DailyCandle
 from quant_trading_platform.strategies.spot_signal_generator import (
-    CandidateResult,
     build_candidate,
     swing_highs,
 )
-from spot_fixtures import NOW_MS, base_inputs, candles, rising, run
 
 
 class SwingHighTests(unittest.TestCase):
