@@ -9,7 +9,7 @@ from quant_trading_platform.notifications.telegram_signals import (
     should_deliver,
 )
 
-TOKEN = "synthetic-token-123"
+FAKE_BOT_CREDENTIAL = "synthetic-token-123"
 
 
 def make_signal(**overrides: object) -> SpotSignal:
@@ -51,7 +51,7 @@ class FakeTransport:
 class TelegramSignalTests(unittest.TestCase):
     def notifier(self, transport: FakeTransport) -> TelegramSignalNotifier:
         return TelegramSignalNotifier(
-            chat_id="8999343417", _token=TOKEN, transport=transport, sleep=lambda _: None
+            chat_id="8999343417", _token=FAKE_BOT_CREDENTIAL, transport=transport, sleep=lambda _: None
         )
 
     def test_medium_and_low_are_not_delivered(self) -> None:
@@ -79,7 +79,7 @@ class TelegramSignalTests(unittest.TestCase):
 
     def test_token_is_not_exposed_in_repr(self) -> None:
         notifier = self.notifier(FakeTransport([]))
-        self.assertNotIn(TOKEN, repr(notifier))
+        self.assertNotIn(FAKE_BOT_CREDENTIAL, repr(notifier))
 
     def test_retries_network_errors_then_succeeds(self) -> None:
         transport = FakeTransport([OSError("boom"), OSError("boom"), {"ok": True}])
@@ -91,7 +91,7 @@ class TelegramSignalTests(unittest.TestCase):
         notifier = self.notifier(transport)
         with self.assertRaises(TelegramDeliveryError) as ctx:
             notifier.deliver(make_signal())
-        self.assertNotIn(TOKEN, str(ctx.exception))
+        self.assertNotIn(FAKE_BOT_CREDENTIAL, str(ctx.exception))
         self.assertNotIn("BTC-USDT-2026-10-10-1H", notifier.delivered_ids)
 
     def test_rejected_message_raises(self) -> None:
