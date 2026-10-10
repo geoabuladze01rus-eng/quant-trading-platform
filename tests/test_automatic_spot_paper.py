@@ -364,9 +364,14 @@ async def test_public_candle_parser_to_automatic_fill(tmp_path, monkeypatch):
 
     def transport(request):
         assert request.method == "GET" and "authorization" not in request.headers
-        rows = feed.completed_series(now_ms=feed.now)[
-            request.url.params["instId"].replace("-", "/")
-        ]
+        series = feed.completed_series(now_ms=feed.now)
+        symbol = request.url.params["instId"].replace("-", "/")
+        if symbol not in series:
+            # Research-only pairs (e.g. SOL) are not in this feed; OKX answers with an error code.
+            return httpx.Response(
+                200, json={"code": "51001", "msg": "Instrument ID does not exist", "data": []},
+            )
+        rows = series[symbol]
         return httpx.Response(
             200,
             json={

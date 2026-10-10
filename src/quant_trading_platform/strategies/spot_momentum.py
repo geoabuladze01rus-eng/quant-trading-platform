@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 DAY_MS = 86_400_000
+# Paper trading, rotation and history universe. Do not change without reviewing paper accounting.
 SYMBOLS = ("BTC/USDT", "ETH/USDT", "LTC/USDT")
+# Read-only research universe; extra pairs here never create paper balances or orders.
+RESEARCH_SYMBOLS = (*SYMBOLS, "SOL/USDT")
 
 
 @dataclass(frozen=True)
@@ -33,15 +36,28 @@ class SpotSignal:
     reference: Decimal
 
 
-def validate_candles(candles: tuple[DailyCandle, ...], *, now_ms: int) -> None:
+HOUR_MS = 3_600_000
+# OKX bar names accepted by the public candle source, with their candle length in ms.
+BAR_MS = {
+    "1Dutc": DAY_MS,
+    "4H": 4 * HOUR_MS,
+    "1H": HOUR_MS,
+    "15m": 15 * 60_000,
+    "5m": 5 * 60_000,
+}
+
+
+def validate_candles(
+    candles: tuple[DailyCandle, ...], *, now_ms: int, interval_ms: int = DAY_MS,
+) -> None:
     if len(candles) < 101:
-        raise ValueError("Insufficient completed daily candles")
-    previous = -DAY_MS
+        raise ValueError("Insufficient completed candles")
+    previous = -interval_ms
     for candle in candles:
         if (
             type(candle.timestamp_ms) is not int
-            or candle.timestamp_ms != previous + DAY_MS and previous != -DAY_MS
-            or candle.timestamp_ms % DAY_MS != 0
+            or candle.timestamp_ms != previous + interval_ms and previous != -interval_ms
+            or candle.timestamp_ms % interval_ms != 0
             or any(not x.is_finite() for x in (
                 candle.open, candle.high, candle.low, candle.close, candle.volume
             ))
@@ -54,13 +70,13 @@ def validate_candles(candles: tuple[DailyCandle, ...], *, now_ms: int) -> None:
             raise ValueError("Invalid or discontinuous completed daily candles")
         previous = candle.timestamp_ms
     age = now_ms - candles[-1].timestamp_ms
-    if age < DAY_MS or age >= 2 * DAY_MS:
-        raise ValueError("Latest completed daily candle is missing or in the future")
+    if age < interval_ms or age >= 2 * interval_ms:
+        raise ValueError("Latest completed candle is missing or in the future")
 
 
 def trend_signal(symbol: str, candles: tuple[DailyCandle, ...]) -> SpotSignal:
     """20-day breakout above SMA100; 10-day low or SMA100 is an exit warning."""
-    if symbol not in SYMBOLS:
+    if symbol not in RESEARCH_SYMBOLS:
         raise ValueError("Unsupported OKX USDT spot pair")
     current = candles[-1]
     average = sum((c.close for c in candles[-100:]), Decimal(0)) / 100
@@ -76,10 +92,11 @@ def trend_signal(symbol: str, candles: tuple[DailyCandle, ...]) -> SpotSignal:
 
 def relative_strength_signals(
     series: dict[str, tuple[DailyCandle, ...]],
+    symbols: tuple[str, ...] = SYMBOLS,
 ) -> list[SpotSignal]:
     """Select at most one positive 30/60-day leader; no short sales."""
-    if set(series) != set(SYMBOLS):
-        raise ValueError("All three OKX spot pairs are required")
+    if set(series) != set(symbols) or len(symbols) < 2:
+        raise ValueError("All OKX spot pairs in the ranking must be provided")
     timestamps = {candles[-1].timestamp_ms for candles in series.values()}
     if len(timestamps) != 1:
         raise ValueError("Spot pairs do not share a completed candle date")
@@ -93,7 +110,7 @@ def relative_strength_signals(
             scores[symbol] = (return_30 + return_60) / 2
     leader = max(scores, key=lambda symbol: (scores[symbol], symbol)) if scores else None
     result = []
-    for symbol in SYMBOLS:
+    for symbol in symbols:
         current = series[symbol][-1]
         if symbol == leader:
             action, code, reason = (

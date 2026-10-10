@@ -95,7 +95,9 @@ async def test_service_never_keeps_partial_data_after_failed_refresh() -> None:
     service = SpotSignalService(source)  # type: ignore[arg-type]
     await service.poll_once()
     assert service.snapshot()["status"] == "ok"
-    assert len(service.snapshot()["signals"]) == 6  # type: ignore[arg-type]
+    # Research universe is 4 pairs (SOL added); each pair gets a trend signal plus a ranking entry.
+    assert len(service.snapshot()["signals"]) == 8  # type: ignore[arg-type]
+    assert service.snapshot()["missing_symbols"] == []
     source.fail = True
     await service.poll_once()
     assert service.snapshot()["status"] == "unavailable"
