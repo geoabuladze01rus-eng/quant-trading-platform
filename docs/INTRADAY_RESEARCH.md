@@ -36,8 +36,10 @@ execution. Every output carries `paper_only: true` and `live_execution: false`.
 ## Known limits
 
 - Thresholds are conservative proposals and have not been back-tested.
-- The sandbox used to write this code could not reach OKX. The `bar` values were taken
-  from the OKX documentation and must be confirmed against a live response before use:
+- Bar acceptance: `4H` and `1H` returned `code: "0"` from the public candles endpoint
+  when fetched through an intermediate web tool (not a direct curl; the sandbox cannot
+  reach OKX). Candle timestamps were multiples of their interval. The returned data looked
+  older than the current time, so freshness is not established. Re-check directly:
   `https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=4H&limit=2`.
 - Symbols are the research universe `BTC/USDT`, `ETH/USDT`, `LTC/USDT`, `SOL/USDT`.
   The paper-trading universe (`SYMBOLS`) remains BTC, ETH and LTC.
