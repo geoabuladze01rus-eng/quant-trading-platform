@@ -51,7 +51,10 @@ class FakeTransport:
 class TelegramSignalTests(unittest.TestCase):
     def notifier(self, transport: FakeTransport) -> TelegramSignalNotifier:
         return TelegramSignalNotifier(
-            chat_id="8999343417", _token=FAKE_BOT_CREDENTIAL, transport=transport, sleep=lambda _: None
+            chat_id="8999343417",
+            _token=FAKE_BOT_CREDENTIAL,
+            transport=transport,
+            sleep=lambda _: None,
         )
 
     def test_medium_and_low_are_not_delivered(self) -> None:
