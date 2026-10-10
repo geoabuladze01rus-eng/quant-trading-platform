@@ -7,6 +7,7 @@ WORKDIR /app
 
 COPY pyproject.toml README.md constraints-py311-linux.txt ./
 COPY src ./src
+COPY bot_registry.yaml ./bot_registry.yaml
 
 RUN pip install --no-cache-dir -c constraints-py311-linux.txt -e .
 

@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     max_derivatives_data_age_ms: int = Field(default=360_000, gt=0)
     public_market_data_enabled: bool = True
     signal_watch_enabled: bool = True
+    bot_registry_path: Path = Path("bot_registry.yaml")
     signal_watch_interval_seconds: int = Field(default=30, ge=15, le=300)
     crypto_market_venues: str = "binance,bybit,okx"
     market_data_symbol: str = "BTC/USDT"

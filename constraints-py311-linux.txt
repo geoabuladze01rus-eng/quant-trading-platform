@@ -35,3 +35,8 @@ typing-extensions==4.16.0
 typing-inspection==0.4.4
 uvicorn==0.53.0
 websockets==17.1
+black==26.10.0
+coverage==7.16.2
+pytest-cov==7.1.0
+PyYAML==6.0.3
+types-PyYAML==6.0.12.20260906

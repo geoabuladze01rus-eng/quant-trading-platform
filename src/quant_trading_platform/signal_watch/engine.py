@@ -27,6 +27,7 @@ class Frame:
     momentum: Decimal
     previous_high: Decimal
     previous_low: Decimal
+    atr: Decimal = Decimal(0)
 
     def __post_init__(self) -> None:
         prices = (
@@ -44,7 +45,7 @@ class Frame:
             or self.timestamp_ms <= 0
             or any(
                 not isinstance(x, Decimal) or not x.is_finite()
-                for x in (*prices, self.trend, self.volume_ratio, self.momentum)
+                for x in (*prices, self.trend, self.volume_ratio, self.momentum, self.atr)
             )
             or min(prices) <= 0
             or self.low > self.close
@@ -54,6 +55,7 @@ class Frame:
             or self.previous_low > self.previous_high
             or self.volume_ratio < 0
             or abs(self.trend) > 1
+            or self.atr < 0
         ):
             raise ValueError("Invalid market structure frame")
 
@@ -126,9 +128,7 @@ class WatchEngine:
             reason = (
                 "stale_structure"
                 if not fresh
-                else "setup_not_confirmed"
-                if setup not in confirmed
-                else result.rejected_reason
+                else "setup_not_confirmed" if setup not in confirmed else result.rejected_reason
             )
             assessment = (
                 replace(result, confidence="REJECTED", rejected_reason=reason) if reason else result
@@ -159,11 +159,11 @@ class WatchEngine:
 
         return [
             cast(dict[str, object], json.loads(payload))
-            | {'signal_id': signal_id, 'missed_reason': missed_reason}
+            | {"signal_id": signal_id, "missed_reason": missed_reason}
             for signal_id, payload, missed_reason in self.journal.connection.execute(
-                'SELECT candidates.signal_id, candidates.payload, missed_opportunities.reason '
-                'FROM candidates LEFT JOIN missed_opportunities USING(signal_id) '
-                'ORDER BY candidates.rowid DESC LIMIT 100'
+                "SELECT candidates.signal_id, candidates.payload, missed_opportunities.reason "
+                "FROM candidates LEFT JOIN missed_opportunities USING(signal_id) "
+                "ORDER BY candidates.rowid DESC LIMIT 100"
             )
         ]
 
@@ -203,8 +203,8 @@ class WatchEngine:
             result[confidence] = {
                 "samples": len(values),
                 "positive": sum(x > 0 for x in values),
-                "mean_net_return": None
-                if not values
-                else str(sum(values, Decimal(0)) / len(values)),
+                "mean_net_return": (
+                    None if not values else str(sum(values, Decimal(0)) / len(values))
+                ),
             }
         return result
