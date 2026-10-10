@@ -59,6 +59,7 @@ class MarketContext:
     volume_confirmed: bool
     multi_timeframe_aligned: bool  # 1D, 4H, 1H and 15M agree
     confirmations: frozenset[str]
+    news_checked: bool = True  # False when no news source was consulted
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +108,8 @@ def evaluate(
         reasons.append("данные устарели или не подтверждены")
     if not context.sources_verified:
         reasons.append("источник данных не подтверждён")
+    if not context.news_checked:
+        reasons.append("новостной фильтр не проверен: сигнал не выдаётся")
     if context.news_risk_critical:
         reasons.append("критический новостной риск: новые сделки запрещены")
     if not context.trend_4h_up:

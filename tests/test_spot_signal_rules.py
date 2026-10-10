@@ -101,6 +101,11 @@ class SpotSignalRulesTests(unittest.TestCase):
         unverified = evaluate(plan(), context(sources_verified=False), current_price=PRICE)
         self.assertFalse(unverified.deliverable)
 
+    def test_unchecked_news_blocks(self) -> None:
+        result = evaluate(plan(), context(news_checked=False), current_price=PRICE)
+        self.assertFalse(result.deliverable)
+        self.assertIn("не проверен", " ".join(result.reasons))
+
     def test_critical_news_blocks(self) -> None:
         result = evaluate(plan(), context(news_risk_critical=True), current_price=PRICE)
         self.assertFalse(result.deliverable)
