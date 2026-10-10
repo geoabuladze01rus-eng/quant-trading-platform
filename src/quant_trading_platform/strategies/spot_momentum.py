@@ -36,15 +36,28 @@ class SpotSignal:
     reference: Decimal
 
 
-def validate_candles(candles: tuple[DailyCandle, ...], *, now_ms: int) -> None:
+HOUR_MS = 3_600_000
+# OKX bar names accepted by the public candle source, with their candle length in ms.
+BAR_MS = {
+    "1Dutc": DAY_MS,
+    "4Hutc": 4 * HOUR_MS,
+    "1Hutc": HOUR_MS,
+    "15m": 15 * 60_000,
+    "5m": 5 * 60_000,
+}
+
+
+def validate_candles(
+    candles: tuple[DailyCandle, ...], *, now_ms: int, interval_ms: int = DAY_MS,
+) -> None:
     if len(candles) < 101:
-        raise ValueError("Insufficient completed daily candles")
-    previous = -DAY_MS
+        raise ValueError("Insufficient completed candles")
+    previous = -interval_ms
     for candle in candles:
         if (
             type(candle.timestamp_ms) is not int
-            or candle.timestamp_ms != previous + DAY_MS and previous != -DAY_MS
-            or candle.timestamp_ms % DAY_MS != 0
+            or candle.timestamp_ms != previous + interval_ms and previous != -interval_ms
+            or candle.timestamp_ms % interval_ms != 0
             or any(not x.is_finite() for x in (
                 candle.open, candle.high, candle.low, candle.close, candle.volume
             ))
@@ -57,8 +70,8 @@ def validate_candles(candles: tuple[DailyCandle, ...], *, now_ms: int) -> None:
             raise ValueError("Invalid or discontinuous completed daily candles")
         previous = candle.timestamp_ms
     age = now_ms - candles[-1].timestamp_ms
-    if age < DAY_MS or age >= 2 * DAY_MS:
-        raise ValueError("Latest completed daily candle is missing or in the future")
+    if age < interval_ms or age >= 2 * interval_ms:
+        raise ValueError("Latest completed candle is missing or in the future")
 
 
 def trend_signal(symbol: str, candles: tuple[DailyCandle, ...]) -> SpotSignal:

@@ -1,4 +1,4 @@
-"""Public, keyless OKX UTC daily candles for research only."""
+"""Public, keyless OKX UTC candles (daily and intraday) for research only."""
 
 from decimal import Decimal, InvalidOperation
 from typing import cast
@@ -6,7 +6,7 @@ from typing import cast
 import httpx
 
 from quant_trading_platform.strategies.spot_momentum import (
-    DAY_MS,
+    BAR_MS,
     RESEARCH_SYMBOLS,
     DailyCandle,
     validate_candles,
@@ -24,12 +24,15 @@ class OKXCandleSource:
         if self._owns_client:
             self._client.close()
 
-    def fetch(self, symbol: str, *, now_ms: int) -> tuple[DailyCandle, ...]:
+    def fetch(self, symbol: str, *, now_ms: int, bar: str = "1Dutc") -> tuple[DailyCandle, ...]:
         if symbol not in RESEARCH_SYMBOLS:
             raise ValueError("Unsupported OKX USDT spot pair")
+        if bar not in BAR_MS:
+            raise ValueError("Unsupported OKX candle interval")
+        interval_ms = BAR_MS[bar]
         request = httpx.Request(
             "GET", self.endpoint,
-            params={"instId": symbol.replace("/", "-"), "bar": "1Dutc", "limit": "200"},
+            params={"instId": symbol.replace("/", "-"), "bar": bar, "limit": "200"},
             extensions={"timeout": httpx.Timeout(5.0).as_dict()},
         )
         try:
@@ -37,15 +40,15 @@ class OKXCandleSource:
             response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError):
-            raise ValueError("OKX public daily candles unavailable") from None
+            raise ValueError("OKX public candles unavailable") from None
         if not isinstance(payload, dict) or payload.get("code") != "0":
-            raise ValueError("OKX public daily candles unavailable")
+            raise ValueError("OKX public candles unavailable")
         result = parse_completed_rows(payload.get("data"))
-        # The latest candle must be yesterday in UTC. Exclude current incomplete bar.
-        # A missing day or a mixed bar timezone fails the entire research snapshot.
-        if result and result[-1].timestamp_ms > now_ms - DAY_MS:
-            raise ValueError("Incomplete OKX daily candle")
-        validate_candles(result, now_ms=now_ms)
+        # The latest candle must be the last completed bar in UTC. Exclude the open bar.
+        # A missing bar or a mixed timezone fails the entire research snapshot.
+        if result and result[-1].timestamp_ms > now_ms - interval_ms:
+            raise ValueError("Incomplete OKX candle")
+        validate_candles(result, now_ms=now_ms, interval_ms=interval_ms)
         return result
 
 
