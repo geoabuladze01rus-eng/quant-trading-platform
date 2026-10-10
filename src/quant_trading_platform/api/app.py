@@ -29,6 +29,7 @@ from quant_trading_platform.market_data.derivatives import (
     DerivativesEvidenceService,
     MultiDerivativesEvidenceService,
 )
+from quant_trading_platform.market_data.intraday_research import IntradayResearchService
 from quant_trading_platform.market_data.liquidations import (
     LiquidationWindow,
     PublicLiquidationCollector,
@@ -147,6 +148,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.public_market_data_enabled and settings.market_scope != MarketScope.RUSSIAN_STOCKS:
         spot_service = SpotSignalService(OKXCandleSource())
     app.state.spot_signals = spot_service
+    intraday_service = None
+    if settings.intraday_research_enabled and settings.public_market_data_enabled and (
+        settings.market_scope != MarketScope.RUSSIAN_STOCKS
+    ):
+        intraday_service = IntradayResearchService(
+            OKXCandleSource(), settings.intraday_research_interval_seconds,
+        )
+    app.state.intraday_research = intraday_service
     auto_spot = AutomaticSpotPaper(app.state.okx_spot_service, settings, spot_service, service)
     app.state.auto_spot = auto_spot
     try:
@@ -154,6 +163,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await service.start()
         if spot_service is not None:
             await spot_service.start()
+        if intraday_service is not None:
+            await intraday_service.start()
         if derivatives_service is not None:
             await derivatives_service.start()
         for collector in collectors:
@@ -169,6 +180,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.derivatives = None
         app.state.liquidations = None
         app.state.liquidation_collectors = []
+        if intraday_service is not None:
+            await intraday_service.stop()
+        app.state.intraday_research = None
         if spot_service is not None:
             await spot_service.stop()
         if service is not None:
@@ -284,6 +298,16 @@ def venues() -> list[dict[str, object]]:
             "bid": None, "ask": None, "timestamp_source": None,
             "depth_status": "unavailable", "bid_levels": 0, "ask_levels": 0,
         }]
+
+
+@app.get("/strategies/intraday-research")
+def intraday_research() -> dict[str, object]:
+    """Read-only cached 4H/1H review candidates; a GET request never fetches or orders."""
+    service: IntradayResearchService | None = getattr(app.state, "intraday_research", None)
+    if service is None:
+        return {"status": "disabled", "paper_only": True, "live_execution": False,
+                "candidates": [], "reason": "Интрадей-исследование выключено."}
+    return service.snapshot()
 
 
 @app.get("/strategies/spot-signals")
